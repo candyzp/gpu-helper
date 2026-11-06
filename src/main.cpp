@@ -288,6 +288,7 @@ class GPUHelperDebugOverlay final : public CCNode {
     CCLabelBMFont* m_label = nullptr;
     CCLabelBMFont* m_shadowLabel = nullptr;
     float m_refreshElapsed = 0.0f;
+    std::uint64_t m_refreshCount = 0;
 
     void refreshText() {
         if (!m_label || !m_shadowLabel) {
@@ -299,7 +300,7 @@ class GPUHelperDebugOverlay final : public CCNode {
             Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
 
         std::ostringstream display;
-        display << "GPU HELPER v0.3.6\n";
+        display << "GPU HELPER v0.3.7\n";
         display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL DEVICE: " << (g_metalAvailable ? "FOUND" : "UNAVAILABLE") << '\n';
         display << "SETTING: " << (cullingEnabled ? "ON" : "OFF")
@@ -364,7 +365,8 @@ class GPUHelperDebugOverlay final : public CCNode {
         display << "TOTAL: " << stats.decorationCullDispatches
                 << " JOBS | " << stats.totalDecorationObjectsProcessed
                 << " OBJECTS\n";
-        display << "SAFETY: 640u MARGIN | FAIL-OPEN";
+        display << "SAFETY: 640u MARGIN | FAIL-OPEN\\n";
+        display << "HUD UPDATE: " << ++m_refreshCount << " | REFRESH: 4 HZ";
 
         auto const text = display.str();
         m_shadowLabel->setString(text.c_str());
@@ -398,7 +400,7 @@ public:
             return false;
         }
 
-        constexpr float kOverlayScale = 0.12f;
+        constexpr float kOverlayScale = 0.15f;
         m_shadowLabel->setAnchorPoint({1.0f, 1.0f});
         m_shadowLabel->setPosition({winSize.width - 13.0f, winSize.height - 24.0f});
         m_shadowLabel->setScale(kOverlayScale);
