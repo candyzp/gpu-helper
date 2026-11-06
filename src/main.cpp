@@ -295,28 +295,59 @@ class GPUHelperDebugOverlay final : public CCNode {
         }
 
         auto const stats = gpuhelper::metal::getStats();
+        bool const cullingEnabled =
+            Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
+
         std::ostringstream display;
-        display << "GPU HELPER: LIVE\n";
+        display << "GPU HELPER v0.3.4\n";
+        display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL: " << (g_metalAvailable ? "READY" : "UNAVAILABLE") << '\n';
 
-        if (g_cullConfigured) {
-            display << "STATIC DECOR: " << g_cullCandidateCount << '\n';
-            display << "CULLED: " << g_cullCulledCount
-                    << " | JOBS: " << stats.decorationCullDispatches << '\n';
+        if (!cullingEnabled) {
+            display << "CULLING: DISABLED IN SETTINGS\n";
+            display << "STATIC OBJECTS: 0 / " << kMinimumDecorationBatch << " MIN\n";
+            display << "GPU JOBS: " << stats.decorationCullDispatches << " TOTAL\n";
+            display << "ACTION: ENABLE GPU CULLING TO TEST\n";
+        }
+        else if (g_cullConfigured) {
+            display << "CULLING: "
+                    << (g_cullStatus == "LIVE" ? "ACTIVE - METAL RESULTS RECEIVED" : g_cullStatus)
+                    << '\n';
+            display << "STATIC OBJECTS: " << g_cullCandidateCount << '\n';
+
+            std::size_t const visibleNow =
+                g_cullCandidateCount >= g_cullCulledCount
+                    ? g_cullCandidateCount - g_cullCulledCount
+                    : 0;
+            display << "VISIBLE: " << visibleNow
+                    << " | CULLED: " << g_cullCulledCount << '\n';
+            display << "GPU JOBS: " << stats.decorationCullDispatches << " TOTAL\n";
 
             if (stats.decorationCullTimingAvailable) {
                 display << std::fixed << std::setprecision(3)
-                        << "GPU: " << stats.lastDecorationCullGpuMilliseconds
-                        << " ms | CPU: "
+                        << "LAST GPU: " << stats.lastDecorationCullGpuMilliseconds
+                        << " ms | CPU SUBMIT: "
                         << stats.lastDecorationCullSubmitMilliseconds << " ms";
             }
+            else if (stats.decorationCullDispatches == 0) {
+                display << "GPU TIMING: WAITING FOR FIRST JOB";
+            }
             else {
-                display << "GPU: timing pending";
+                display << "GPU TIMING: NOT AVAILABLE";
             }
         }
         else {
             display << "CULLING: " << g_cullStatus << '\n';
-            display << "CANDIDATES: " << g_cullCandidateCount;
+            display << "STATIC OBJECTS: " << g_cullCandidateCount
+                    << " / " << kMinimumDecorationBatch << " MIN\n";
+            display << "GPU JOBS: " << stats.decorationCullDispatches << " TOTAL\n";
+
+            if (g_cullStatus == "NOT ENOUGH STATIC DECOR") {
+                display << "ACTION: TRY A DECORATION-HEAVY LEVEL";
+            }
+            else {
+                display << "STATUS: NORMAL DRAWING IS PRESERVED";
+            }
         }
 
         auto const text = display.str();
@@ -343,26 +374,27 @@ public:
 
         auto const winSize = CCDirector::sharedDirector()->getWinSize();
 
-        // Text-only HUD: no panel or opaque background. A one-point black
-        // duplicate behind the white text keeps diagnostics readable.
+        // Compact text-only HUD. The offset black copy is a letter shadow,
+        // not a panel; no opaque background node is created.
         m_shadowLabel = CCLabelBMFont::create("", "bigFont.fnt");
         m_label = CCLabelBMFont::create("", "bigFont.fnt");
         if (!m_shadowLabel || !m_label) {
             return false;
         }
 
+        constexpr float kOverlayScale = 0.105f;
         m_shadowLabel->setAnchorPoint({1.0f, 1.0f});
-        m_shadowLabel->setPosition({winSize.width - 15.0f, winSize.height - 35.0f});
-        m_shadowLabel->setScale(0.205f);
+        m_shadowLabel->setPosition({winSize.width - 13.0f, winSize.height - 24.0f});
+        m_shadowLabel->setScale(kOverlayScale);
         m_shadowLabel->setColor(ccc3(0, 0, 0));
-        m_shadowLabel->setOpacity(210);
+        m_shadowLabel->setOpacity(220);
         this->addChild(m_shadowLabel, 0);
 
         m_label->setAnchorPoint({1.0f, 1.0f});
-        m_label->setPosition({winSize.width - 16.0f, winSize.height - 34.0f});
-        m_label->setScale(0.205f);
+        m_label->setPosition({winSize.width - 14.0f, winSize.height - 23.0f});
+        m_label->setScale(kOverlayScale);
         m_label->setColor(ccc3(255, 255, 255));
-        m_label->setOpacity(235);
+        m_label->setOpacity(245);
         this->addChild(m_label, 1);
 
         this->scheduleUpdate();

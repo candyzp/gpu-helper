@@ -2,7 +2,7 @@
 
 An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 experiment using Metal compute for a real, narrowly scoped gameplay workload.
 
-## Current milestone: GPU-assisted static decoration visibility (v0.3.3)
+## Current milestone: GPU-assisted static decoration visibility (v0.3.4)
 
 GPU Helper now uses Metal to evaluate camera intersection tests for ungrouped static decoration objects in the loaded level.
 
@@ -20,12 +20,12 @@ What this does not do: it does not replace Geometry Dash's renderer, draw object
 
 This is an experiment, not a guaranteed FPS boost. It is intended to reduce Cocos render traversal for levels with many eligible static decorations. Sparse levels or levels dominated by dynamic/grouped objects may see little or no benefit. The GPU dispatch itself also consumes GPU time, so on-device comparisons are required before calling it a net optimization.
 
-The diagnostics overlay attaches directly to Geometry Dash's screen-space PlayLayer HUD after setup completes as compact white text with a small shadow and no background panel and reports the real number of candidate objects, objects currently culled, completed Metal dispatches, GPU execution time (when available), and CPU submission time. It does not fabricate activity.
+The diagnostics overlay attaches directly to Geometry Dash's screen-space PlayLayer HUD after setup completes as smaller white text with a small shadow and no background panel. It shows the Metal device, whether culling is disabled, waiting, or active after a completed Metal result, eligible object count and 96-object minimum, visible/culled counts, completed dispatch count, and GPU/CPU submission timing when available. `METAL: READY` means a device was detected; `CULLING: ACTIVE - METAL RESULTS RECEIVED` is the indicator that visibility work actually completed. It does not fabricate activity.
 
 ## Settings
 
 - GPU-assisted static decoration culling — enabled by default; disable it to return to normal Cocos traversal.
-- Show in-game GPU diagnostics overlay — shows the live workload and timing information.
+- Show in-game GPU diagnostics overlay — shows the detailed live workload state and timing information.
 
 ## Regression test
 
