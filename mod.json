@@ -5,9 +5,9 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.2.1",
+  "version": "v0.3.0",
   "developer": "candyzp",
-  "description": "Experimental iOS Metal compute prototype with a visible in-game diagnostics overlay.",
+  "description": "Experimental iOS Metal compute mod with GPU-assisted static decoration visibility culling.",
   "tags": [
     "performance",
     "enhancement",
@@ -20,7 +20,13 @@
     "debug-overlay": {
       "type": "bool",
       "name": "Show in-game GPU diagnostics overlay",
-      "description": "Display live Metal device status and actual completed GPU workload counters during gameplay. The overlay does not invent GPU activity.",
+      "description": "Display actual Metal decoration visibility dispatches, candidate counts, and timings during gameplay.",
+      "default": true
+    },
+    "gpu-decoration-culling": {
+      "type": "bool",
+      "name": "GPU-assisted static decoration culling",
+      "description": "Use Metal to test ungrouped static decoration bounds against the camera. Cocos still draws visible objects; gameplay updates, triggers, collisions, and player physics remain on the normal game path. Experimental and fail-open if GPU work fails.",
       "default": true
     }
   }
