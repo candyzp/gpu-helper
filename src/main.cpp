@@ -483,39 +483,41 @@ $on_mod(Loaded) {
 }
 
 class $modify(GPUHelperPlayLayer, PlayLayer) {
-    void update(float dt) {
-        PlayLayer::update(dt);
+    void setupHasCompleted() {
+        PlayLayer::setupHasCompleted();
 
-        // Attach after the PlayLayer is actively updating, rather than relying
-        // on setupHasCompleted being invoked on every supported iOS binding.
-        if (PlayLayer::get() != this) {
-            return;
+        // The HUD is Geometry Dash's screen-space layer. Parenting the panel
+        // here keeps it above the camera/world layers and on screen.
+        auto* uiLayer = this->m_uiLayer;
+        if (!uiLayer) {
+            log::warn("[GPU Helper] Gameplay HUD layer unavailable; overlay not attached.");
         }
-
-        auto* scene = CCDirector::sharedDirector()->getRunningScene();
-        if (!scene) {
-            return;
-        }
-
-        if (auto* existing = scene->getChildByTag(kDebugOverlayTag)) {
-            (void)existing;
-        }
-        else {
+        else if (!uiLayer->getChildByTag(kDebugOverlayTag)) {
             auto* overlay = GPUHelperDebugOverlay::create();
             if (overlay) {
                 overlay->setTag(kDebugOverlayTag);
-                scene->addChild(overlay, 1000000);
-                log::info("[GPU Helper] Diagnostics overlay attached from active PlayLayer::update.");
+                uiLayer->addChild(overlay, 1000000);
+                log::info("[GPU Helper] Diagnostics overlay attached to PlayLayer HUD.");
             }
             else {
                 log::warn("[GPU Helper] Failed to create diagnostics overlay.");
             }
         }
 
-        if (auto* existing = scene->getChildByTag(kCullingDriverTag)) {
-            (void)existing;
+        auto* scene = CCDirector::sharedDirector()->getRunningScene();
+        if (!scene) {
+            log::warn("[GPU Helper] Could not attach GPU culling driver: no running scene.");
+            return;
+        }
+
+        if (Mod::get()->getSettingValue<bool>("gpu-decoration-culling")) {
+            configureDecorationCulling(this);
         }
         else {
+            clearCullingState("OFF", this);
+        }
+
+        if (!scene->getChildByTag(kCullingDriverTag)) {
             auto* driver = GPUHelperCullingDriver::create();
             if (driver) {
                 driver->setTag(kCullingDriverTag);
@@ -525,15 +527,6 @@ class $modify(GPUHelperPlayLayer, PlayLayer) {
             else {
                 clearCullingState("DRIVER UNAVAILABLE", this);
                 log::warn("[GPU Helper] Failed to create GPU culling driver; normal drawing remains enabled.");
-            }
-        }
-
-        if (g_cullLayer != this) {
-            if (Mod::get()->getSettingValue<bool>("gpu-decoration-culling")) {
-                configureDecorationCulling(this);
-            }
-            else {
-                clearCullingState("OFF", this);
             }
         }
     }

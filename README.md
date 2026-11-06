@@ -2,7 +2,7 @@
 
 An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 experiment using Metal compute for a real, narrowly scoped gameplay workload.
 
-## Current milestone: GPU-assisted static decoration visibility (v0.3.1)
+## Current milestone: GPU-assisted static decoration visibility (v0.3.2)
 
 GPU Helper now uses Metal to evaluate camera intersection tests for ungrouped static decoration objects in the loaded level.
 
@@ -20,7 +20,7 @@ What this does not do: it does not replace Geometry Dash's renderer, draw object
 
 This is an experiment, not a guaranteed FPS boost. It is intended to reduce Cocos render traversal for levels with many eligible static decorations. Sparse levels or levels dominated by dynamic/grouped objects may see little or no benefit. The GPU dispatch itself also consumes GPU time, so on-device comparisons are required before calling it a net optimization.
 
-The in-game overlay is attached from the active PlayLayer update hook (not only from setup completion) and reports the real number of candidate objects, objects currently culled, completed Metal dispatches, GPU execution time (when available), and CPU submission time. It does not fabricate activity.
+The diagnostics overlay attaches directly to Geometry Dash's screen-space PlayLayer HUD after setup completes and reports the real number of candidate objects, objects currently culled, completed Metal dispatches, GPU execution time (when available), and CPU submission time. It does not fabricate activity.
 
 ## Settings
 
