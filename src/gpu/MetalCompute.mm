@@ -10,12 +10,27 @@
 #include <limits>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace {
 
 constexpr char kKernelSource[] = R"metal(
 #include <metal_stdlib>
 using namespace metal;
+
+struct ObjectBounds {
+    float minX;
+    float minY;
+    float maxX;
+    float maxY;
+};
+
+struct ViewRect {
+    float minX;
+    float minY;
+    float maxX;
+    float maxY;
+};
 
 kernel void gpuhelper_multiply_add(
     device const float* lhs       [[buffer(0)]],
@@ -29,16 +44,49 @@ kernel void gpuhelper_multiply_add(
         output[index] = lhs[index] * rhs[index] + addend[index];
     }
 }
+
+kernel void gpuhelper_cull_decoration_bounds(
+    device const ObjectBounds* bounds [[buffer(0)]],
+    device uint* visible              [[buffer(1)]],
+    constant ViewRect& view           [[buffer(2)]],
+    constant uint& objectCount        [[buffer(3)]],
+    uint index                        [[thread_position_in_grid]]
+) {
+    if (index >= objectCount) {
+        return;
+    }
+
+    ObjectBounds const object = bounds[index];
+    bool const intersects =
+        object.maxX >= view.minX &&
+        object.minX <= view.maxX &&
+        object.maxY >= view.minY &&
+        object.minY <= view.maxY;
+
+    visible[index] = intersects ? 1u : 0u;
+}
 )metal";
 
 id<MTLDevice> g_device = nil;
 id<MTLCommandQueue> g_commandQueue = nil;
 id<MTLComputePipelineState> g_pipeline = nil;
+id<MTLComputePipelineState> g_decorationCullPipeline = nil;
 std::string g_initializationError;
+std::string g_decorationCullInitializationError;
 std::once_flag g_initializationOnce;
 
 std::mutex g_statsMutex;
 gpuhelper::metal::ComputeStats g_computeStats;
+
+std::mutex g_cullMutex;
+id<MTLBuffer> g_cullBoundsBuffer = nil;
+id<MTLBuffer> g_cullOutputBuffer = nil;
+std::uint32_t g_cullObjectCount = 0;
+std::uint64_t g_cullGeneration = 0;
+std::uint64_t g_cullPendingGeneration = 0;
+bool g_cullInFlight = false;
+bool g_cullResultsReady = false;
+std::vector<std::uint32_t> g_cullCompletedResults;
 
 std::string nsStringToStdString(NSString* value) {
     if (value == nil) {
@@ -55,12 +103,14 @@ void initializeBackend() {
             g_device = MTLCreateSystemDefaultDevice();
             if (g_device == nil) {
                 g_initializationError = "Metal is unavailable on this device.";
+                g_decorationCullInitializationError = g_initializationError;
                 return;
             }
 
             g_commandQueue = [g_device newCommandQueue];
             if (g_commandQueue == nil) {
                 g_initializationError = "Could not create a Metal command queue.";
+                g_decorationCullInitializationError = g_initializationError;
                 return;
             }
 
@@ -73,6 +123,7 @@ void initializeBackend() {
 
             if (library == nil) {
                 g_initializationError = nsStringToStdString(metalError.localizedDescription);
+                g_decorationCullInitializationError = g_initializationError;
                 return;
             }
 
@@ -80,18 +131,43 @@ void initializeBackend() {
                 [library newFunctionWithName:@"gpuhelper_multiply_add"];
             if (function == nil) {
                 g_initializationError = "Metal library did not contain gpuhelper_multiply_add.";
-                return;
+            }
+            else {
+                g_pipeline = [g_device
+                    newComputePipelineStateWithFunction:function
+                    error:&metalError];
+
+                if (g_pipeline == nil) {
+                    g_initializationError = nsStringToStdString(metalError.localizedDescription);
+                }
             }
 
-            g_pipeline = [g_device
-                newComputePipelineStateWithFunction:function
-                error:&metalError];
+            id<MTLFunction> cullFunction =
+                [library newFunctionWithName:@"gpuhelper_cull_decoration_bounds"];
+            if (cullFunction == nil) {
+                g_decorationCullInitializationError =
+                    "Metal library did not contain gpuhelper_cull_decoration_bounds.";
+            }
+            else {
+                metalError = nil;
+                g_decorationCullPipeline = [g_device
+                    newComputePipelineStateWithFunction:cullFunction
+                    error:&metalError];
 
-            if (g_pipeline == nil) {
-                g_initializationError = nsStringToStdString(metalError.localizedDescription);
+                if (g_decorationCullPipeline == nil) {
+                    g_decorationCullInitializationError =
+                        nsStringToStdString(metalError.localizedDescription);
+                }
             }
         }
     });
+}
+
+void clearCullFlightForGeneration(std::uint64_t generation) {
+    std::lock_guard<std::mutex> lock(g_cullMutex);
+    if (g_cullPendingGeneration == generation) {
+        g_cullInFlight = false;
+    }
 }
 
 } // namespace
@@ -132,7 +208,6 @@ bool multiplyAdd(
 ) {
     error.clear();
 
-    // An empty batch is a valid no-op and does not need a GPU dispatch.
     if (count == 0) {
         return true;
     }
@@ -268,6 +343,259 @@ bool multiplyAdd(
 
         return true;
     }
+}
+
+bool configureDecorationCulling(
+    ObjectBounds const* bounds,
+    std::size_t count,
+    std::uint64_t generation,
+    std::string& error
+) {
+    error.clear();
+
+    if (count == 0) {
+        clearDecorationCulling(generation);
+        return true;
+    }
+
+    if (bounds == nullptr) {
+        error = "Decoration culling requires a non-null bounds array.";
+        return false;
+    }
+
+    if (count > std::numeric_limits<std::uint32_t>::max() ||
+        count > std::numeric_limits<std::size_t>::max() / sizeof(ObjectBounds) ||
+        count > std::numeric_limits<std::size_t>::max() / sizeof(std::uint32_t) ||
+        count > std::numeric_limits<NSUInteger>::max() / sizeof(ObjectBounds) ||
+        count > std::numeric_limits<NSUInteger>::max() / sizeof(std::uint32_t)) {
+        error = "Decoration culling batch is too large.";
+        return false;
+    }
+
+    initializeBackend();
+    if (g_device == nil || g_commandQueue == nil || g_decorationCullPipeline == nil) {
+        error = g_decorationCullInitializationError.empty()
+            ? "Metal decoration culling pipeline is unavailable."
+            : g_decorationCullInitializationError;
+        return false;
+    }
+
+    @autoreleasepool {
+        NSUInteger const boundsLength =
+            static_cast<NSUInteger>(count * sizeof(ObjectBounds));
+        NSUInteger const outputLength =
+            static_cast<NSUInteger>(count * sizeof(std::uint32_t));
+
+        id<MTLBuffer> boundsBuffer = [g_device
+            newBufferWithBytes:bounds
+            length:boundsLength
+            options:MTLResourceStorageModeShared];
+        id<MTLBuffer> outputBuffer = [g_device
+            newBufferWithLength:outputLength
+            options:MTLResourceStorageModeShared];
+
+        if (boundsBuffer == nil || outputBuffer == nil) {
+            error = "Metal could not allocate decoration culling buffers.";
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(g_cullMutex);
+        g_cullBoundsBuffer = boundsBuffer;
+        g_cullOutputBuffer = outputBuffer;
+        g_cullObjectCount = static_cast<std::uint32_t>(count);
+        g_cullGeneration = generation;
+        g_cullResultsReady = false;
+        g_cullCompletedResults.clear();
+    }
+
+    return true;
+}
+
+bool submitDecorationCulling(
+    ViewRect const& view,
+    std::uint64_t generation,
+    std::string& error
+) {
+    error.clear();
+
+    id<MTLBuffer> boundsBuffer = nil;
+    id<MTLBuffer> outputBuffer = nil;
+    std::uint32_t objectCount = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(g_cullMutex);
+        if (g_cullInFlight) {
+            return false;
+        }
+
+        if (generation != g_cullGeneration ||
+            g_cullObjectCount == 0 ||
+            g_cullBoundsBuffer == nil ||
+            g_cullOutputBuffer == nil) {
+            error = "Decoration culling context is not configured for this level.";
+            return false;
+        }
+
+        g_cullInFlight = true;
+        g_cullPendingGeneration = generation;
+        objectCount = g_cullObjectCount;
+        boundsBuffer = g_cullBoundsBuffer;
+        outputBuffer = g_cullOutputBuffer;
+    }
+
+    auto const submitStart = std::chrono::steady_clock::now();
+
+    @autoreleasepool {
+        id<MTLCommandBuffer> commandBuffer = [g_commandQueue commandBuffer];
+        if (commandBuffer == nil) {
+            clearCullFlightForGeneration(generation);
+            error = "Metal could not create a decoration culling command buffer.";
+            return false;
+        }
+
+        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+        if (encoder == nil) {
+            clearCullFlightForGeneration(generation);
+            error = "Metal could not create a decoration culling encoder.";
+            return false;
+        }
+
+        [encoder setComputePipelineState:g_decorationCullPipeline];
+        [encoder setBuffer:boundsBuffer offset:0 atIndex:0];
+        [encoder setBuffer:outputBuffer offset:0 atIndex:1];
+        [encoder setBytes:&view length:sizeof(view) atIndex:2];
+        [encoder setBytes:&objectCount length:sizeof(objectCount) atIndex:3];
+
+        NSUInteger const maxThreads =
+            g_decorationCullPipeline.maxTotalThreadsPerThreadgroup;
+        NSUInteger const threadgroupWidth = std::min<NSUInteger>(64, maxThreads);
+        if (threadgroupWidth == 0) {
+            [encoder endEncoding];
+            clearCullFlightForGeneration(generation);
+            error = "Metal reported an invalid decoration culling threadgroup size.";
+            return false;
+        }
+
+        MTLSize const threadsPerThreadgroup =
+            MTLSizeMake(threadgroupWidth, 1, 1);
+        MTLSize const threadgroups = MTLSizeMake(
+            (static_cast<NSUInteger>(objectCount) + threadgroupWidth - 1) /
+                threadgroupWidth,
+            1,
+            1
+        );
+
+        [encoder dispatchThreadgroups:threadgroups
+                threadsPerThreadgroup:threadsPerThreadgroup];
+        [encoder endEncoding];
+
+        [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> completedBuffer) {
+            bool const completed =
+                completedBuffer.status == MTLCommandBufferStatusCompleted;
+            std::vector<std::uint32_t> results;
+
+            if (completed && outputBuffer.contents != nullptr) {
+                results.resize(objectCount);
+                std::memcpy(
+                    results.data(),
+                    outputBuffer.contents,
+                    static_cast<std::size_t>(objectCount) * sizeof(std::uint32_t)
+                );
+            }
+
+            double gpuMilliseconds = 0.0;
+            bool gpuTimingAvailable = false;
+            CFTimeInterval const gpuStart = completedBuffer.GPUStartTime;
+            CFTimeInterval const gpuEnd = completedBuffer.GPUEndTime;
+            if (gpuStart > 0.0 && gpuEnd >= gpuStart) {
+                gpuMilliseconds =
+                    static_cast<double>((gpuEnd - gpuStart) * 1000.0);
+                gpuTimingAvailable = true;
+            }
+
+            bool acceptedResult = false;
+            {
+                std::lock_guard<std::mutex> lock(g_cullMutex);
+                if (g_cullInFlight &&
+                    g_cullPendingGeneration == generation) {
+                    g_cullInFlight = false;
+
+                    if (g_cullGeneration == generation &&
+                        completed &&
+                        results.size() == objectCount) {
+                        g_cullCompletedResults = std::move(results);
+                        g_cullResultsReady = true;
+                        acceptedResult = true;
+                    }
+                    else if (g_cullGeneration == generation) {
+                        // Disable this context after a failed command. The
+                        // gameplay side will fail open and stop submitting.
+                        g_cullObjectCount = 0;
+                        g_cullBoundsBuffer = nil;
+                        g_cullOutputBuffer = nil;
+                        g_cullResultsReady = false;
+                        g_cullCompletedResults.clear();
+                    }
+                }
+            }
+
+            if (acceptedResult) {
+                std::uint64_t visibleCount = 0;
+                for (auto const value : g_cullCompletedResults) {
+                    if (value != 0) {
+                        ++visibleCount;
+                    }
+                }
+
+                std::lock_guard<std::mutex> lock(g_statsMutex);
+                ++g_computeStats.decorationCullDispatches;
+                g_computeStats.totalDecorationObjectsProcessed += objectCount;
+                g_computeStats.lastDecorationObjectCount = objectCount;
+                g_computeStats.lastDecorationVisibleCount = visibleCount;
+                g_computeStats.lastDecorationCullGpuMilliseconds = gpuMilliseconds;
+                g_computeStats.decorationCullTimingAvailable = gpuTimingAvailable;
+            }
+        }];
+
+        [commandBuffer commit];
+    }
+
+    double const submitMilliseconds =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - submitStart
+        ).count();
+
+    {
+        std::lock_guard<std::mutex> lock(g_statsMutex);
+        g_computeStats.lastDecorationCullSubmitMilliseconds = submitMilliseconds;
+    }
+
+    return true;
+}
+
+bool takeDecorationCullingResults(
+    std::vector<std::uint32_t>& visible,
+    std::uint64_t& generation
+) {
+    std::lock_guard<std::mutex> lock(g_cullMutex);
+    if (!g_cullResultsReady) {
+        return false;
+    }
+
+    visible = std::move(g_cullCompletedResults);
+    generation = g_cullGeneration;
+    g_cullResultsReady = false;
+    return true;
+}
+
+void clearDecorationCulling(std::uint64_t nextGeneration) {
+    std::lock_guard<std::mutex> lock(g_cullMutex);
+    g_cullGeneration = nextGeneration;
+    g_cullObjectCount = 0;
+    g_cullBoundsBuffer = nil;
+    g_cullOutputBuffer = nil;
+    g_cullResultsReady = false;
+    g_cullCompletedResults.clear();
 }
 
 } // namespace gpuhelper::metal
