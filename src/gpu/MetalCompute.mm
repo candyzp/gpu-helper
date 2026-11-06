@@ -493,6 +493,7 @@ bool submitDecorationCulling(
             bool const completed =
                 completedBuffer.status == MTLCommandBufferStatusCompleted;
             std::vector<std::uint32_t> results;
+            std::uint64_t visibleCount = 0;
 
             if (completed && outputBuffer.contents != nullptr) {
                 results.resize(objectCount);
@@ -501,6 +502,11 @@ bool submitDecorationCulling(
                     outputBuffer.contents,
                     static_cast<std::size_t>(objectCount) * sizeof(std::uint32_t)
                 );
+                for (auto const value : results) {
+                    if (value != 0) {
+                        ++visibleCount;
+                    }
+                }
             }
 
             double gpuMilliseconds = 0.0;
@@ -540,13 +546,6 @@ bool submitDecorationCulling(
             }
 
             if (acceptedResult) {
-                std::uint64_t visibleCount = 0;
-                for (auto const value : g_cullCompletedResults) {
-                    if (value != 0) {
-                        ++visibleCount;
-                    }
-                }
-
                 std::lock_guard<std::mutex> lock(g_statsMutex);
                 ++g_computeStats.decorationCullDispatches;
                 g_computeStats.totalDecorationObjectsProcessed += objectCount;
