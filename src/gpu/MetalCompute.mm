@@ -4,6 +4,7 @@
 #include "MetalCompute.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -35,6 +36,9 @@ id<MTLCommandQueue> g_commandQueue = nil;
 id<MTLComputePipelineState> g_pipeline = nil;
 std::string g_initializationError;
 std::once_flag g_initializationOnce;
+
+std::mutex g_statsMutex;
+gpuhelper::metal::ComputeStats g_computeStats;
 
 std::string nsStringToStdString(NSString* value) {
     if (value == nil) {
@@ -93,6 +97,11 @@ void initializeBackend() {
 } // namespace
 
 namespace gpuhelper::metal {
+
+ComputeStats getStats() {
+    std::lock_guard<std::mutex> lock(g_statsMutex);
+    return g_computeStats;
+}
 
 bool getDeviceName(std::string& name, std::string& error) {
     name.clear();
@@ -213,8 +222,10 @@ bool multiplyAdd(
                 threadsPerThreadgroup:threadsPerThreadgroup];
         [encoder endEncoding];
 
+        auto const submitAndWaitStart = std::chrono::steady_clock::now();
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
+        auto const completedAt = std::chrono::steady_clock::now();
 
         if (commandBuffer.status != MTLCommandBufferStatusCompleted) {
             error = commandBuffer.error != nil
@@ -230,6 +241,31 @@ bool multiplyAdd(
         }
 
         std::memcpy(output, gpuOutput, byteLength);
+
+        double const submitAndWaitMilliseconds =
+            std::chrono::duration<double, std::milli>(
+                completedAt - submitAndWaitStart
+            ).count();
+
+        double gpuMilliseconds = 0.0;
+        bool gpuTimingAvailable = false;
+        CFTimeInterval const gpuStart = commandBuffer.GPUStartTime;
+        CFTimeInterval const gpuEnd = commandBuffer.GPUEndTime;
+        if (gpuStart > 0.0 && gpuEnd >= gpuStart) {
+            gpuMilliseconds = static_cast<double>((gpuEnd - gpuStart) * 1000.0);
+            gpuTimingAvailable = true;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_statsMutex);
+            ++g_computeStats.completedDispatches;
+            g_computeStats.totalElementsProcessed += static_cast<std::uint64_t>(count);
+            g_computeStats.lastElementCount = static_cast<std::uint64_t>(count);
+            g_computeStats.lastGpuMilliseconds = gpuMilliseconds;
+            g_computeStats.lastSubmitAndWaitMilliseconds = submitAndWaitMilliseconds;
+            g_computeStats.gpuTimingAvailable = gpuTimingAvailable;
+        }
+
         return true;
     }
 }

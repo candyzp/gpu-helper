@@ -1,9 +1,22 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace gpuhelper::metal {
+
+struct ComputeStats {
+    std::uint64_t completedDispatches = 0;
+    std::uint64_t totalElementsProcessed = 0;
+    std::uint64_t lastElementCount = 0;
+    double lastGpuMilliseconds = 0.0;
+    double lastSubmitAndWaitMilliseconds = 0.0;
+    bool gpuTimingAvailable = false;
+};
+
+// Returns a thread-safe snapshot of successfully completed Metal workloads.
+ComputeStats getStats();
 
 // Returns the default Metal device name without creating a compute pipeline.
 bool getDeviceName(std::string& name, std::string& error);

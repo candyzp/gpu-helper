@@ -68,6 +68,8 @@ int main() {
 
     std::cout << "Metal device: " << deviceName << '\n';
 
+    auto const initialStats = gpuhelper::metal::getStats();
+
     // Empty batches are defined no-ops and may use null pointers.
     if (!gpuhelper::metal::multiplyAdd(
             nullptr, nullptr, nullptr, nullptr, 0, error)) {
@@ -86,16 +88,53 @@ int main() {
         fail("invalid-pointer failure did not provide an error");
         return 1;
     }
-    std::cout << "PASS: invalid pointer guard\n";
+
+    auto const guardedStats = gpuhelper::metal::getStats();
+    if (guardedStats.completedDispatches != initialStats.completedDispatches ||
+        guardedStats.totalElementsProcessed != initialStats.totalElementsProcessed) {
+        fail("no-op or invalid-pointer calls changed completed-dispatch counters");
+        return 1;
+    }
+    std::cout << "PASS: invalid pointer guard and statistics\n";
 
     // These sizes cover both sides of the 64-thread dispatch boundary.
     constexpr std::size_t kBatchSizes[] = {1, 63, 64, 65, 257, 1024};
+    std::uint64_t expectedElements = 0;
     for (std::size_t count : kBatchSizes) {
         if (!runBatch(count)) {
             return 1;
         }
+        expectedElements += static_cast<std::uint64_t>(count);
     }
 
+    auto const finalStats = gpuhelper::metal::getStats();
+    if (finalStats.completedDispatches !=
+            initialStats.completedDispatches + (sizeof(kBatchSizes) / sizeof(kBatchSizes[0]))) {
+        fail("completed-dispatch counter did not match successful GPU calls");
+        return 1;
+    }
+    if (finalStats.totalElementsProcessed !=
+            initialStats.totalElementsProcessed + expectedElements) {
+        fail("processed-element counter did not match successful GPU calls");
+        return 1;
+    }
+    if (finalStats.lastElementCount != 1024) {
+        fail("last-batch counter did not preserve the final successful batch size");
+        return 1;
+    }
+    if (!std::isfinite(finalStats.lastSubmitAndWaitMilliseconds) ||
+        finalStats.lastSubmitAndWaitMilliseconds < 0.0) {
+        fail("submit-plus-wait timing was not finite and non-negative");
+        return 1;
+    }
+    if (finalStats.gpuTimingAvailable &&
+        (!std::isfinite(finalStats.lastGpuMilliseconds) ||
+         finalStats.lastGpuMilliseconds < 0.0)) {
+        fail("GPU timing was available but not finite and non-negative");
+        return 1;
+    }
+
+    std::cout << "PASS: diagnostic counters and timings\n";
     std::cout << "PASS: Metal compute regression suite\n";
     return 0;
 }

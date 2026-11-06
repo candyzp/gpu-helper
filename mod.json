@@ -5,9 +5,9 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.1.0",
+  "version": "v0.2.0",
   "developer": "candyzp",
-  "description": "Experimental iOS Metal compute prototype for Geometry Dash. No gameplay or rendering replacement.",
+  "description": "Experimental iOS Metal compute prototype with an optional in-game diagnostics overlay.",
   "tags": [
     "performance",
     "enhancement",
@@ -15,5 +15,13 @@
   ],
   "links": {
     "source": "https://github.com/candyzp/gpu-helper"
+  },
+  "settings": {
+    "debug-overlay": {
+      "type": "bool",
+      "name": "Enable in-game GPU diagnostics",
+      "description": "Show completed Metal dispatches and processed elements during gameplay. This overlay reports zero workloads until a Geometry Dash job is connected; it does not generate artificial GPU activity.",
+      "default": false
+    }
   }
 }
