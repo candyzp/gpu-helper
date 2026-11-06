@@ -1,37 +1,35 @@
 # GPU Helper
 
-An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 prototype exploring whether Metal compute can assist with independent mathematical work.
+An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 experiment using Metal compute for a real, narrowly scoped gameplay workload.
 
-## Current milestone: visible in-game diagnostics
+## Current milestone: GPU-assisted static decoration visibility
 
-- Keeps Geometry Dash's renderer, gameplay, player physics, collision, triggers, and timing untouched.
-- Adds a small Objective-C++ bridge to Metal.
-- Implements one independent element-wise multiply-add kernel as a concrete GPU-compute proof.
-- Tracks only successfully completed Metal dispatches, processed elements, last batch size, GPU execution time (when Metal exposes it), and CPU submit-plus-wait time.
-- Adds a visible in-game diagnostics panel to the gameplay scene after PlayLayer setup completes.
-- The panel is enabled by default and can be disabled using **Show in-game GPU diagnostics overlay** in GPU Helper settings.
-- The overlay refreshes independently on its own Cocos node schedule and logs when it attaches.
+GPU Helper now uses Metal to evaluate camera intersection tests for ungrouped static decoration objects in the loaded level.
 
-**Important current limitation:** the multiply-add API is not connected to Geometry Dash gameplay or background systems yet. In a normal level, the overlay will honestly show 'GPU JOB: NONE', zero dispatches, and zero elements. 'METAL: READY' means that the device exposes Metal; it does not mean a compute workload has run.
+- At level setup, the mod gathers bounds of eligible static decorations once and uploads them to persistent shared Metal buffers.
+- During play, a Metal compute kernel tests those bounds against an expanded camera rectangle.
+- The dispatch is asynchronous. The gameplay thread does not wait for the GPU or read back a result synchronously.
+- Completed masks are applied to a GameObject visit hook. Only objects proven to be outside the expanded view are skipped during Cocos render traversal.
+- The camera rectangle has a 640-unit safety margin. Large camera jumps or zoom changes immediately clear the cull mask so drawing fails open.
+- Only objects marked as decorations, with the engine's static-decoration flag set and no group membership, are candidates.
+- If Metal initialization, buffer setup, dispatch, result validation, or the driver fails, the mod clears its cull mask and normal drawing continues.
 
-## Why this starts small
+What this does not do: it does not replace Geometry Dash's renderer, draw objects with Metal, change object visibility flags, remove objects, or alter player physics, collision, triggers, object updates, or level timing. Cocos2d remains responsible for drawing. On death, the PlayLayer and its static-object cache remain in place; the bounds are not rebuilt unless the level is exited and loaded again.
 
-GPU work has submission, synchronization, and data-transfer costs. A kernel that returns a result to the CPU may cost more than doing a small calculation on the CPU. The overlay reports both GPU execution time (when available) and CPU submit-plus-wait time so later experiments can measure the full cost. It does not claim an FPS improvement.
+## Performance expectations
 
-## Build
+This is an experiment, not a guaranteed FPS boost. It is intended to reduce Cocos render traversal for levels with many eligible static decorations. Sparse levels or levels dominated by dynamic/grouped objects may see little or no benefit. The GPU dispatch itself also consumes GPU time, so on-device comparisons are required before calling it a net optimization.
 
-The root project is built for iOS arm64 using the Geode build action:
+The in-game overlay reports the real number of candidate objects, objects currently culled, completed Metal dispatches, GPU execution time (when available), and CPU submission time. It does not fabricate activity.
 
-- Geometry Dash: 2.2081
-- Geode: 5.11.2
-- Target: iOS arm64
+## Settings
 
-The GitHub Actions workflow runs two independent jobs:
-
-1. **iOS Build** — builds and uploads the Geode package.
-2. **Metal Compute Regression** — compiles the Metal bridge on a macOS runner, runs it against boundary-sized input batches, and checks every result against a CPU reference.
+- GPU-assisted static decoration culling — enabled by default; disable it to return to normal Cocos traversal.
+- Show in-game GPU diagnostics overlay — shows the live workload and timing information.
 
 ## Regression test
+
+The macOS Metal regression test covers the original multiply-add proof kernel and input validation, asynchronous decoration-bound visibility dispatch, exact inside/outside/intersection results, generation tracking, and completed-work counters.
 
 Run locally on a Mac with Xcode command-line tools and a Metal-capable device:
 
@@ -42,8 +40,8 @@ Run locally on a Mac with Xcode command-line tools and a Metal-capable device:
       -o build/metal-compute-regression
     ./build/metal-compute-regression
 
-The test covers empty input, invalid pointers, and sizes around the 64-thread dispatch boundary (1, 63, 64, 65, 257, and 1024 elements). It also verifies that diagnostic counters only increase after successful GPU dispatches.
+## Build target
 
-## Next step
-
-Identify one independent Geometry Dash calculation suitable for GPU offload and instrument its real invocation path. Until then, the overlay intentionally reports that no gameplay workload is connected.
+- Geometry Dash: 2.2081
+- Geode: 5.11.2
+- Target: iOS arm64
