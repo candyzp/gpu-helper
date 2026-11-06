@@ -2,7 +2,7 @@
 
 An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 experiment using Metal compute for a real, narrowly scoped gameplay workload.
 
-## Current milestone: GPU-assisted static decoration visibility (v0.3.4)
+## Current milestone: GPU-assisted static decoration visibility (v0.3.5)
 
 GPU Helper now uses Metal to evaluate camera intersection tests for ungrouped static decoration objects in the loaded level.
 
@@ -24,7 +24,7 @@ The diagnostics overlay attaches directly to Geometry Dash's screen-space PlayLa
 
 ## Settings
 
-- GPU-assisted static decoration culling — enabled by default; disable it to return to normal Cocos traversal.
+- GPU-assisted static decoration culling — enabled by default; disable it to return to normal Cocos traversal. Toggling it on during an already-loaded level now initializes that level's static-decoration batch without requiring a level reload.
 - Show in-game GPU diagnostics overlay — shows the detailed live workload state and timing information.
 
 ## Regression test

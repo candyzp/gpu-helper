@@ -5,9 +5,9 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.3.4",
+  "version": "v0.3.5",
   "developer": "candyzp",
-  "description": "Experimental iOS Metal compute mod with compact, detailed gameplay diagnostics and GPU-assisted static decoration visibility culling.",
+  "description": "Experimental iOS Metal compute mod with detailed live gameplay diagnostics and GPU-assisted static decoration visibility culling, including reliable runtime enable/disable transitions.",
   "tags": [
     "performance",
     "enhancement",

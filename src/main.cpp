@@ -462,7 +462,15 @@ public:
             return;
         }
 
-        if (g_cullLayer != layer) {
+        // A level can be remembered while culling is disabled. If the setting
+        // is enabled later in that same level, the layer pointer alone must not
+        // suppress initialization: "OFF" with no configured batch means this
+        // level has not yet been scanned for the current enabled state.
+        bool const needsConfiguration =
+            g_cullLayer != layer ||
+            (!g_cullConfigured && g_cullStatus == "OFF");
+
+        if (needsConfiguration) {
             configureDecorationCulling(layer);
         }
 
