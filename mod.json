@@ -5,9 +5,9 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.3.0",
+  "version": "v0.3.1",
   "developer": "candyzp",
-  "description": "Experimental iOS Metal compute mod with GPU-assisted static decoration visibility culling.",
+  "description": "Experimental iOS Metal compute mod with active-gameplay overlay attachment and GPU-assisted static decoration visibility culling.",
   "tags": [
     "performance",
     "enhancement",
@@ -20,7 +20,7 @@
     "debug-overlay": {
       "type": "bool",
       "name": "Show in-game GPU diagnostics overlay",
-      "description": "Display actual Metal decoration visibility dispatches, candidate counts, and timings during gameplay.",
+      "description": "Display Metal decoration visibility dispatches and candidate counts; attached from the active gameplay update hook.",
       "default": true
     },
     "gpu-decoration-culling": {
