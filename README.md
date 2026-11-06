@@ -2,7 +2,7 @@
 
 An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 experiment using Metal compute for a real, narrowly scoped gameplay workload.
 
-## Current milestone: GPU-assisted static decoration visibility (v0.3.5)
+## Current milestone: GPU-assisted static decoration visibility (v0.3.6)
 
 GPU Helper now uses Metal to evaluate camera intersection tests for ungrouped static decoration objects in the loaded level.
 
@@ -20,7 +20,7 @@ What this does not do: it does not replace Geometry Dash's renderer, draw object
 
 This is an experiment, not a guaranteed FPS boost. It is intended to reduce Cocos render traversal for levels with many eligible static decorations. Sparse levels or levels dominated by dynamic/grouped objects may see little or no benefit. The GPU dispatch itself also consumes GPU time, so on-device comparisons are required before calling it a net optimization.
 
-The diagnostics overlay attaches directly to Geometry Dash's screen-space PlayLayer HUD after setup completes as smaller white text with a small shadow and no background panel. It shows the Metal device, whether culling is disabled, waiting, or active after a completed Metal result, eligible object count and 96-object minimum, visible/culled counts, completed dispatch count, and GPU/CPU submission timing when available. `METAL: READY` means a device was detected; `CULLING: ACTIVE - METAL RESULTS RECEIVED` is the indicator that visibility work actually completed. It does not fabricate activity.
+The diagnostics overlay attaches directly to Geometry Dash's screen-space PlayLayer HUD after setup completes. The text is larger (0.12 scale), white with a black letter shadow, and has no background panel. It separates the setting state from the pipeline state, shows the eligible static-decoration batch against the 96-object minimum, and explicitly reports whether a completed Metal visibility result has arrived. When active it reports visible and culled counts, the number of render traversals skipped, the last GPU execution time, CPU submission time, completed job count, total objects processed, and the 640-unit safety margin. A detected Metal device is not treated as proof of a completed GPU job.
 
 ## Settings
 

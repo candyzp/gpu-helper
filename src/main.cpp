@@ -299,56 +299,72 @@ class GPUHelperDebugOverlay final : public CCNode {
             Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
 
         std::ostringstream display;
-        display << "GPU HELPER v0.3.5\n";
+        display << "GPU HELPER v0.3.6\n";
         display << "DEVICE: " << g_metalDeviceName << '\n';
-        display << "METAL: " << (g_metalAvailable ? "READY" : "UNAVAILABLE") << '\n';
+        display << "METAL DEVICE: " << (g_metalAvailable ? "FOUND" : "UNAVAILABLE") << '\n';
+        display << "SETTING: " << (cullingEnabled ? "ON" : "OFF")
+                << " | PIPELINE: "
+                << (!cullingEnabled ? "DISABLED" : (g_cullConfigured ? "READY" : "WAITING"))
+                << '\n';
 
         if (!cullingEnabled) {
-            display << "CULLING: DISABLED IN SETTINGS\n";
-            display << "STATIC OBJECTS: 0 / " << kMinimumDecorationBatch << " MIN\n";
-            display << "GPU JOBS: " << stats.decorationCullDispatches << " TOTAL\n";
-            display << "ACTION: ENABLE GPU CULLING TO TEST\n";
+            display << "STATIC: DISABLED IN SETTINGS\n";
+            display << "GPU RESULT: DISABLED\n";
+            display << "DRAW: NORMAL - NOTHING CULLED\n";
         }
         else if (g_cullConfigured) {
-            display << "CULLING: "
-                    << (g_cullStatus == "LIVE" ? "ACTIVE - METAL RESULTS RECEIVED" : g_cullStatus)
+            display << "STATIC: " << g_cullCandidateCount << " CANDIDATES (96 MIN)\n";
+            display << "GPU RESULT: "
+                    << (g_cullStatus == "LIVE" ? "ACTIVE" : g_cullStatus)
                     << '\n';
-            display << "STATIC OBJECTS: " << g_cullCandidateCount << '\n';
 
             std::size_t const visibleNow =
                 g_cullCandidateCount >= g_cullCulledCount
                     ? g_cullCandidateCount - g_cullCulledCount
                     : 0;
-            display << "VISIBLE: " << visibleNow
-                    << " | CULLED: " << g_cullCulledCount << '\n';
-            display << "GPU JOBS: " << stats.decorationCullDispatches << " TOTAL\n";
-
-            if (stats.decorationCullTimingAvailable) {
-                display << std::fixed << std::setprecision(3)
-                        << "LAST GPU: " << stats.lastDecorationCullGpuMilliseconds
-                        << " ms | CPU SUBMIT: "
-                        << stats.lastDecorationCullSubmitMilliseconds << " ms";
-            }
-            else if (stats.decorationCullDispatches == 0) {
-                display << "GPU TIMING: WAITING FOR FIRST JOB";
-            }
-            else {
-                display << "GPU TIMING: NOT AVAILABLE";
-            }
+            display << "MASK: " << visibleNow << " VISIBLE | "
+                    << g_cullCulledCount << " CULLED\n";
+            display << "DRAW: " << g_cullCulledCount << " OBJECTS SKIPPED\n";
         }
         else {
-            display << "CULLING: " << g_cullStatus << '\n';
-            display << "STATIC OBJECTS: " << g_cullCandidateCount
-                    << " / " << kMinimumDecorationBatch << " MIN\n";
-            display << "GPU JOBS: " << stats.decorationCullDispatches << " TOTAL\n";
+            display << "STATIC: " << g_cullCandidateCount << " / "
+                    << kMinimumDecorationBatch << " MIN\n";
 
             if (g_cullStatus == "NOT ENOUGH STATIC DECOR") {
-                display << "ACTION: TRY A DECORATION-HEAVY LEVEL";
+                display << "BATCH: TOO SMALL - NEED 96+\n";
+                display << "GPU RESULT: NO JOB SUBMITTED\n";
+            }
+            else if (g_cullStatus == "METAL SETUP FAILED") {
+                display << "BATCH: METAL SETUP FAILED\n";
+                display << "GPU RESULT: FAILED OPEN\n";
             }
             else {
-                display << "STATUS: NORMAL DRAWING IS PRESERVED";
+                display << "BATCH: WAITING FOR LEVEL SCAN\n";
+                display << "GPU RESULT: NOT RUN YET\n";
             }
+
+            display << "DRAW: NORMAL - NOTHING CULLED\n";
         }
+
+        if (stats.decorationCullTimingAvailable) {
+            display << std::fixed << std::setprecision(3)
+                    << "TIME: " << stats.lastDecorationCullGpuMilliseconds
+                    << "ms GPU | " << stats.lastDecorationCullSubmitMilliseconds
+                    << "ms SUBMIT\n";
+        }
+        else if (stats.decorationCullDispatches == 0) {
+            display << "TIME: WAITING FOR FIRST GPU JOB\n";
+        }
+        else {
+            display << std::fixed << std::setprecision(3)
+                    << "TIME: GPU N/A | " << stats.lastDecorationCullSubmitMilliseconds
+                    << "ms SUBMIT\n";
+        }
+
+        display << "TOTAL: " << stats.decorationCullDispatches
+                << " JOBS | " << stats.totalDecorationObjectsProcessed
+                << " OBJECTS\n";
+        display << "SAFETY: 640u MARGIN | FAIL-OPEN";
 
         auto const text = display.str();
         m_shadowLabel->setString(text.c_str());
@@ -382,7 +398,7 @@ public:
             return false;
         }
 
-        constexpr float kOverlayScale = 0.105f;
+        constexpr float kOverlayScale = 0.12f;
         m_shadowLabel->setAnchorPoint({1.0f, 1.0f});
         m_shadowLabel->setPosition({winSize.width - 13.0f, winSize.height - 24.0f});
         m_shadowLabel->setScale(kOverlayScale);
