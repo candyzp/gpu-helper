@@ -299,7 +299,7 @@ class GPUHelperDebugOverlay final : public CCNode {
             Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
 
         std::ostringstream display;
-        display << "GPU HELPER v0.3.4\n";
+        display << "GPU HELPER v0.3.5\n";
         display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL: " << (g_metalAvailable ? "READY" : "UNAVAILABLE") << '\n';
 
