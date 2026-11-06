@@ -1,9 +1,11 @@
 #include "gpu/MetalCompute.hpp"
 
 #include <cmath>
+#include <chrono>
 #include <cstddef>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -23,7 +25,6 @@ bool runBatch(std::size_t count) {
         int const a = static_cast<int>((i * 13) % 101) - 50;
         int const b = static_cast<int>((i * 7) % 67) - 33;
         int const c = static_cast<int>((i * 5) % 43) - 21;
-
         lhs[i] = static_cast<float>(a) * 0.03125f;
         rhs[i] = static_cast<float>(b) * 0.0625f;
         addend[i] = static_cast<float>(c) * 0.015625f;
@@ -39,7 +40,6 @@ bool runBatch(std::size_t count) {
     for (std::size_t i = 0; i < count; ++i) {
         float const expected = lhs[i] * rhs[i] + addend[i];
         float const tolerance = 1.0e-5f * (1.0f + std::fabs(expected));
-
         if (!std::isfinite(output[i]) ||
             std::fabs(output[i] - expected) > tolerance) {
             return fail(
@@ -51,7 +51,73 @@ bool runBatch(std::size_t count) {
         }
     }
 
-    std::cout << "PASS: " << count << " elements\n";
+    std::cout << "PASS: " << count << " multiply-add elements\n";
+    return true;
+}
+
+bool runDecorationCullRegression() {
+    using namespace gpuhelper::metal;
+
+    std::vector<ObjectBounds> bounds = {
+        { 10.0f, 10.0f, 20.0f, 20.0f },
+        { -30.0f, 10.0f, -1.0f, 20.0f },
+        { 100.0f, 40.0f, 120.0f, 60.0f },
+        { 10.0f, 101.0f, 20.0f, 110.0f },
+        { 45.0f, 45.0f, 55.0f, 55.0f }
+    };
+
+    ViewRect const view { 0.0f, 0.0f, 100.0f, 100.0f };
+    std::string error;
+    if (!configureDecorationCulling(bounds.data(), bounds.size(), 42, error)) {
+        return fail("could not configure GPU decoration culling: " + error);
+    }
+    if (!submitDecorationCulling(view, 42, error)) {
+        return fail("could not submit GPU decoration culling: " + error);
+    }
+
+    std::vector<std::uint32_t> visible;
+    std::uint64_t generation = 0;
+    bool received = false;
+    for (int attempt = 0; attempt < 1000; ++attempt) {
+        if (takeDecorationCullingResults(visible, generation)) {
+            received = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    if (!received) {
+        clearDecorationCulling(43);
+        return fail("asynchronous GPU decoration culling did not complete");
+    }
+    if (generation != 42) {
+        clearDecorationCulling(43);
+        return fail("GPU culling result carried the wrong level generation");
+    }
+
+    std::uint32_t const expected[] = { 1u, 0u, 1u, 0u, 1u };
+    if (visible.size() != sizeof(expected) / sizeof(expected[0])) {
+        clearDecorationCulling(43);
+        return fail("GPU culling returned an unexpected result count");
+    }
+    for (std::size_t i = 0; i < visible.size(); ++i) {
+        if (visible[i] != expected[i]) {
+            clearDecorationCulling(43);
+            return fail("GPU culling mask mismatch at object " + std::to_string(i));
+        }
+    }
+
+    auto const stats = getStats();
+    if (stats.decorationCullDispatches == 0 ||
+        stats.lastDecorationObjectCount != bounds.size() ||
+        stats.lastDecorationVisibleCount != 3) {
+        clearDecorationCulling(43);
+        return fail("GPU decoration culling counters did not match completed work");
+    }
+
+    clearDecorationCulling(43);
+    std::cout << "PASS: asynchronous decoration visibility mask\n";
+    std::cout << "PASS: decoration culling counters\n";
     return true;
 }
 
@@ -60,25 +126,20 @@ bool runBatch(std::size_t count) {
 int main() {
     std::string deviceName;
     std::string error;
-
     if (!gpuhelper::metal::getDeviceName(deviceName, error)) {
         fail("Metal device unavailable: " + error);
         return 1;
     }
-
     std::cout << "Metal device: " << deviceName << '\n';
 
     auto const initialStats = gpuhelper::metal::getStats();
-
-    // Empty batches are defined no-ops and may use null pointers.
     if (!gpuhelper::metal::multiplyAdd(
             nullptr, nullptr, nullptr, nullptr, 0, error)) {
         fail("empty batch was not treated as a no-op: " + error);
         return 1;
     }
-    std::cout << "PASS: empty batch\n";
+    std::cout << "PASS: empty multiply-add batch\n";
 
-    // Invalid pointers must fail cleanly instead of being sent to Metal.
     if (gpuhelper::metal::multiplyAdd(
             nullptr, nullptr, nullptr, nullptr, 1, error)) {
         fail("non-empty batch accepted null pointers");
@@ -95,10 +156,9 @@ int main() {
         fail("no-op or invalid-pointer calls changed completed-dispatch counters");
         return 1;
     }
-    std::cout << "PASS: invalid pointer guard and statistics\n";
+    std::cout << "PASS: invalid-pointer guard and multiply-add statistics\n";
 
-    // These sizes cover both sides of the 64-thread dispatch boundary.
-    constexpr std::size_t kBatchSizes[] = {1, 63, 64, 65, 257, 1024};
+    constexpr std::size_t kBatchSizes[] = { 1, 63, 64, 65, 257, 1024 };
     std::uint64_t expectedElements = 0;
     for (std::size_t count : kBatchSizes) {
         if (!runBatch(count)) {
@@ -109,7 +169,8 @@ int main() {
 
     auto const finalStats = gpuhelper::metal::getStats();
     if (finalStats.completedDispatches !=
-            initialStats.completedDispatches + (sizeof(kBatchSizes) / sizeof(kBatchSizes[0]))) {
+            initialStats.completedDispatches +
+                (sizeof(kBatchSizes) / sizeof(kBatchSizes[0]))) {
         fail("completed-dispatch counter did not match successful GPU calls");
         return 1;
     }
@@ -134,7 +195,11 @@ int main() {
         return 1;
     }
 
-    std::cout << "PASS: diagnostic counters and timings\n";
+    std::cout << "PASS: multiply-add diagnostic counters and timings\n";
+    if (!runDecorationCullRegression()) {
+        return 1;
+    }
+
     std::cout << "PASS: Metal compute regression suite\n";
     return 0;
 }
