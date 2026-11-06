@@ -2,16 +2,17 @@
 
 An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 prototype exploring whether Metal compute can assist with independent mathematical work.
 
-## Current milestone: compute proof + diagnostics
+## Current milestone: visible in-game diagnostics
 
 - Keeps Geometry Dash's renderer, gameplay, player physics, collision, triggers, and timing untouched.
 - Adds a small Objective-C++ bridge to Metal.
 - Implements one independent element-wise multiply-add kernel as a concrete GPU-compute proof.
-- Adds thread-safe counters for successfully completed Metal dispatches, processed elements, the last batch size, GPU execution time (when Metal exposes it), and CPU submit-plus-wait time.
-- Adds an optional in-game diagnostics overlay, disabled by default. Enable **Enable in-game GPU diagnostics** in the GPU Helper mod settings.
-- The overlay reports actual completed calls to the Metal compute API. It never invents activity or launches synthetic work.
+- Tracks only successfully completed Metal dispatches, processed elements, last batch size, GPU execution time (when Metal exposes it), and CPU submit-plus-wait time.
+- Adds a visible in-game diagnostics panel to the gameplay scene after PlayLayer setup completes.
+- The panel is enabled by default and can be disabled using **Show in-game GPU diagnostics overlay** in GPU Helper settings.
+- The overlay refreshes independently on its own Cocos node schedule and logs when it attaches.
 
-**Important current limitation:** the multiply-add API is not connected to Geometry Dash gameplay or background systems yet. In a normal level, the overlay will therefore show Workload: NONE, zero dispatches, and zero elements. Metal: READY only means that the device exposes Metal; it does not mean a compute workload has run.
+**Important current limitation:** the multiply-add API is not connected to Geometry Dash gameplay or background systems yet. In a normal level, the overlay will honestly show 'GPU JOB: NONE', zero dispatches, and zero elements. 'METAL: READY' means that the device exposes Metal; it does not mean a compute workload has run.
 
 ## Why this starts small
 
@@ -45,4 +46,4 @@ The test covers empty input, invalid pointers, and sizes around the 64-thread di
 
 ## Next step
 
-After the iOS package and regression test pass, the next milestone is to identify one independent Geometry Dash calculation suitable for GPU offload. Until then, the overlay intentionally reports that no gameplay job is connected.
+Identify one independent Geometry Dash calculation suitable for GPU offload and instrument its real invocation path. Until then, the overlay intentionally reports that no gameplay workload is connected.
