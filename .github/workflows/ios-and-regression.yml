@@ -1,0 +1,49 @@
+name: iOS Build and Metal Regression
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ios-build:
+    name: iOS Build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build GPU Helper for iOS
+        id: geode-build
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          sdk: given
+          target: iOS
+
+      - name: Upload iOS package
+        uses: actions/upload-artifact@v7
+        with:
+          name: GPU-Helper-iOS
+          path: ${{ steps.geode-build.outputs.build-output }}/*.geode
+          if-no-files-found: error
+
+  metal-compute-regression:
+    name: Metal Compute Regression
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compile Metal regression test
+        run: |
+          mkdir -p "$RUNNER_TEMP/gpu-helper"
+          xcrun --sdk macosx clang++ -std=c++23 -fobjc-arc -Isrc \
+            src/gpu/MetalCompute.mm tests/metal_compute_regression.mm \
+            -framework Foundation -framework Metal \
+            -o "$RUNNER_TEMP/gpu-helper/metal-compute-regression"
+
+      - name: Run Metal regression test
+        run: "$RUNNER_TEMP/gpu-helper/metal-compute-regression"

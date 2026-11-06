@@ -1,0 +1,6 @@
+build/
+geode-sdk/
+cpm-cache/
+.output/
+*.geode
+.DS_Store

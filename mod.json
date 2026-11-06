@@ -1,0 +1,19 @@
+{
+  "geode": "5.11.2",
+  "gd": {
+    "ios": "2.2081"
+  },
+  "id": "candyzp.gpuhelper",
+  "name": "GPU Helper",
+  "version": "v0.1.0",
+  "developer": "candyzp",
+  "description": "Experimental iOS Metal compute prototype for Geometry Dash. No gameplay or rendering replacement.",
+  "tags": [
+    "performance",
+    "enhancement",
+    "experimental"
+  ],
+  "links": {
+    "source": "https://github.com/candyzp/gpu-helper"
+  }
+}
