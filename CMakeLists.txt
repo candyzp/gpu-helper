@@ -39,3 +39,12 @@ endif()
 
 add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 setup_geode_mod(${PROJECT_NAME})
+
+# The Geode 2.2081 iOS codegen emits FMOD wrappers into GeneratedSource.cpp.
+# Force-include the SDK's canonical FMOD declarations for that generated target.
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" AND TARGET GeodeBindings)
+    target_compile_options(GeodeBindings PRIVATE
+        "-include"
+        "Geode/fmod/fmod.hpp"
+    )
+endif()
