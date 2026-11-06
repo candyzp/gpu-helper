@@ -365,7 +365,7 @@ class GPUHelperDebugOverlay final : public CCNode {
         display << "TOTAL: " << stats.decorationCullDispatches
                 << " JOBS | " << stats.totalDecorationObjectsProcessed
                 << " OBJECTS\n";
-        display << "SAFETY: 640u MARGIN | FAIL-OPEN\\n";
+        display << "SAFETY: 640u MARGIN | FAIL-OPEN\n";
         display << "HUD UPDATE: " << ++m_refreshCount << " | REFRESH: 4 HZ";
 
         auto const text = display.str();
