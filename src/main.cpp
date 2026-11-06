@@ -483,52 +483,58 @@ $on_mod(Loaded) {
 }
 
 class $modify(GPUHelperPlayLayer, PlayLayer) {
-    void setupHasCompleted() {
-        PlayLayer::setupHasCompleted();
+    void update(float dt) {
+        PlayLayer::update(dt);
 
-        auto* scene = CCDirector::sharedDirector()->getRunningScene();
-        if (scene) {
-            // Remove the previous scene helper before configuring the next
-            // level. Its onExit clears the previous level's Metal context.
-            if (auto* existing = scene->getChildByTag(kDebugOverlayTag)) {
-                existing->removeFromParentAndCleanup(true);
-            }
-            if (auto* existing = scene->getChildByTag(kCullingDriverTag)) {
-                existing->removeFromParentAndCleanup(true);
-            }
-        }
-
-        if (Mod::get()->getSettingValue<bool>("gpu-decoration-culling")) {
-            configureDecorationCulling(this);
-        }
-        else {
-            clearCullingState("OFF");
-        }
-
-        if (!scene) {
-            log::warn("[GPU Helper] Could not attach gameplay helpers: no running scene.");
+        // Attach after the PlayLayer is actively updating, rather than relying
+        // on setupHasCompleted being invoked on every supported iOS binding.
+        if (PlayLayer::get() != this) {
             return;
         }
 
-        auto* overlay = GPUHelperDebugOverlay::create();
-        if (overlay) {
-            overlay->setTag(kDebugOverlayTag);
-            scene->addChild(overlay, 1000000);
-            log::info("[GPU Helper] Diagnostics overlay attached to gameplay scene.");
-        }
-        else {
-            log::warn("[GPU Helper] Failed to create diagnostics overlay.");
+        auto* scene = CCDirector::sharedDirector()->getRunningScene();
+        if (!scene) {
+            return;
         }
 
-        auto* driver = GPUHelperCullingDriver::create();
-        if (driver) {
-            driver->setTag(kCullingDriverTag);
-            scene->addChild(driver, 1000001);
-            log::info("[GPU Helper] GPU decoration culling driver attached.");
+        if (auto* existing = scene->getChildByTag(kDebugOverlayTag)) {
+            (void)existing;
         }
         else {
-            clearCullingState("DRIVER UNAVAILABLE", this);
-            log::warn("[GPU Helper] Failed to create GPU culling driver; normal drawing remains enabled.");
+            auto* overlay = GPUHelperDebugOverlay::create();
+            if (overlay) {
+                overlay->setTag(kDebugOverlayTag);
+                scene->addChild(overlay, 1000000);
+                log::info("[GPU Helper] Diagnostics overlay attached from active PlayLayer::update.");
+            }
+            else {
+                log::warn("[GPU Helper] Failed to create diagnostics overlay.");
+            }
+        }
+
+        if (auto* existing = scene->getChildByTag(kCullingDriverTag)) {
+            (void)existing;
+        }
+        else {
+            auto* driver = GPUHelperCullingDriver::create();
+            if (driver) {
+                driver->setTag(kCullingDriverTag);
+                scene->addChild(driver, 1000001);
+                log::info("[GPU Helper] GPU decoration culling driver attached.");
+            }
+            else {
+                clearCullingState("DRIVER UNAVAILABLE", this);
+                log::warn("[GPU Helper] Failed to create GPU culling driver; normal drawing remains enabled.");
+            }
+        }
+
+        if (g_cullLayer != this) {
+            if (Mod::get()->getSettingValue<bool>("gpu-decoration-culling")) {
+                configureDecorationCulling(this);
+            }
+            else {
+                clearCullingState("OFF", this);
+            }
         }
     }
 };
