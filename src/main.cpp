@@ -286,46 +286,42 @@ bool isDecorationCulled(GameObject* object) {
 
 class GPUHelperDebugOverlay final : public CCNode {
     CCLabelBMFont* m_label = nullptr;
+    CCLabelBMFont* m_shadowLabel = nullptr;
     float m_refreshElapsed = 0.0f;
 
     void refreshText() {
-        if (!m_label) {
+        if (!m_label || !m_shadowLabel) {
             return;
         }
 
         auto const stats = gpuhelper::metal::getStats();
         std::ostringstream display;
-        display << "GPU HELPER | LIVE\n";
+        display << "GPU HELPER: LIVE\n";
         display << "METAL: " << (g_metalAvailable ? "READY" : "UNAVAILABLE") << '\n';
-        display << "DEVICE: " << g_metalDeviceName << '\n';
 
         if (g_cullConfigured) {
-            display << "GPU JOB: DECORATION VISIBILITY\n";
-            display << "STATUS: " << g_cullStatus << '\n';
-            display << "CANDIDATES: " << g_cullCandidateCount << '\n';
-            display << "CULLED: " << g_cullCulledCount << '\n';
-            display << "DISPATCHES: " << stats.decorationCullDispatches << '\n';
+            display << "STATIC DECOR: " << g_cullCandidateCount << '\n';
+            display << "CULLED: " << g_cullCulledCount
+                    << " | JOBS: " << stats.decorationCullDispatches << '\n';
 
             if (stats.decorationCullTimingAvailable) {
                 display << std::fixed << std::setprecision(3)
-                        << "GPU: " << stats.lastDecorationCullGpuMilliseconds << " ms\n";
+                        << "GPU: " << stats.lastDecorationCullGpuMilliseconds
+                        << " ms | CPU: "
+                        << stats.lastDecorationCullSubmitMilliseconds << " ms";
             }
             else {
-                display << "GPU: timing pending\n";
+                display << "GPU: timing pending";
             }
-
-            display << std::fixed << std::setprecision(3)
-                    << "CPU SUBMIT: "
-                    << stats.lastDecorationCullSubmitMilliseconds << " ms";
         }
         else {
-            display << "GPU JOB: NONE\n";
             display << "CULLING: " << g_cullStatus << '\n';
-            display << "CANDIDATES: " << g_cullCandidateCount << '\n';
-            display << "NO ACTIVE GPU WORKLOAD";
+            display << "CANDIDATES: " << g_cullCandidateCount;
         }
 
-        m_label->setString(display.str().c_str());
+        auto const text = display.str();
+        m_shadowLabel->setString(text.c_str());
+        m_label->setString(text.c_str());
     }
 
 public:
@@ -347,26 +343,27 @@ public:
 
         auto const winSize = CCDirector::sharedDirector()->getWinSize();
 
-        auto* background = CCLayerColor::create(ccc4(0, 0, 0, 190));
-        if (!background) {
-            return false;
-        }
-
-        background->setContentSize({310.0f, 164.0f});
-        background->setAnchorPoint({1.0f, 1.0f});
-        background->setPosition({winSize.width - 8.0f, winSize.height - 48.0f});
-        this->addChild(background, 0);
-
+        // Text-only HUD: no panel or opaque background. A one-point black
+        // duplicate behind the white text keeps diagnostics readable.
+        m_shadowLabel = CCLabelBMFont::create("", "bigFont.fnt");
         m_label = CCLabelBMFont::create("", "bigFont.fnt");
-        if (!m_label) {
+        if (!m_shadowLabel || !m_label) {
             return false;
         }
 
-        m_label->setAnchorPoint({0.0f, 1.0f});
-        m_label->setPosition({9.0f, 154.0f});
-        m_label->setScale(0.245f);
-        m_label->setOpacity(245);
-        background->addChild(m_label, 1);
+        m_shadowLabel->setAnchorPoint({1.0f, 1.0f});
+        m_shadowLabel->setPosition({winSize.width - 15.0f, winSize.height - 35.0f});
+        m_shadowLabel->setScale(0.205f);
+        m_shadowLabel->setColor(ccc3(0, 0, 0));
+        m_shadowLabel->setOpacity(210);
+        this->addChild(m_shadowLabel, 0);
+
+        m_label->setAnchorPoint({1.0f, 1.0f});
+        m_label->setPosition({winSize.width - 16.0f, winSize.height - 34.0f});
+        m_label->setScale(0.205f);
+        m_label->setColor(ccc3(255, 255, 255));
+        m_label->setOpacity(235);
+        this->addChild(m_label, 1);
 
         this->scheduleUpdate();
         refreshText();
@@ -383,7 +380,7 @@ public:
         }
 
         m_refreshElapsed += dt;
-        if (m_refreshElapsed < 0.20f) {
+        if (m_refreshElapsed < 0.25f) {
             return;
         }
 
