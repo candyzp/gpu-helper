@@ -519,7 +519,18 @@ bool submitDecorationCulling(
                 gpuTimingAvailable = true;
             }
 
+            std::string completionError;
+            if (!completed) {
+                completionError = completedBuffer.error != nil
+                    ? nsStringToStdString(completedBuffer.error.localizedDescription)
+                    : "Metal command buffer did not complete successfully.";
+            }
+            else if (outputBuffer.contents == nullptr || results.size() != objectCount) {
+                completionError = "Metal completed without a readable visibility result buffer.";
+            }
+
             bool acceptedResult = false;
+            bool failedCurrentGeneration = false;
             {
                 std::lock_guard<std::mutex> lock(g_cullMutex);
                 if (g_cullInFlight &&
@@ -527,20 +538,19 @@ bool submitDecorationCulling(
                     g_cullInFlight = false;
 
                     if (g_cullGeneration == generation &&
-                        completed &&
+                        completionError.empty() &&
                         results.size() == objectCount) {
                         g_cullCompletedResults = std::move(results);
                         g_cullResultsReady = true;
                         acceptedResult = true;
                     }
                     else if (g_cullGeneration == generation) {
-                        // Disable this context after a failed command. The
-                        // gameplay side will fail open and stop submitting.
                         g_cullObjectCount = 0;
                         g_cullBoundsBuffer = nil;
                         g_cullOutputBuffer = nil;
                         g_cullResultsReady = false;
                         g_cullCompletedResults.clear();
+                        failedCurrentGeneration = true;
                     }
                 }
             }
@@ -553,6 +563,11 @@ bool submitDecorationCulling(
                 g_computeStats.lastDecorationVisibleCount = visibleCount;
                 g_computeStats.lastDecorationCullGpuMilliseconds = gpuMilliseconds;
                 g_computeStats.decorationCullTimingAvailable = gpuTimingAvailable;
+            }
+            else if (failedCurrentGeneration) {
+                std::lock_guard<std::mutex> lock(g_statsMutex);
+                ++g_computeStats.decorationCullFailures;
+                g_computeStats.lastDecorationCullError = completionError;
             }
         }];
 
