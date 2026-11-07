@@ -5,9 +5,9 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.5.2",
+  "version": "v0.5.3",
   "developer": "candyzp",
-  "description": "iOS Metal visibility compute with opt-in atlas-quad draw-range culling, no texture-initialization hooks, a legacy measurement fallback, and persistent diagnostics.",
+  "description": "iOS Metal visibility compute with opt-in atlas-quad draw-range culling, a null-safe sprite-batch blend check, no texture-initialization hooks, and persistent diagnostics.",
   "tags": [
     "performance",
     "enhancement",

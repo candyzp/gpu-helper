@@ -45,6 +45,7 @@ std::uint64_t g_resultFrame = 0;
 bool g_resultReady = false;
 gpuhelper::atlas::FrameStats g_frameStats;
 bool g_loggedGLVersion = false;
+bool g_loggedMissingBatchTexture = false;
 
 bool isFinitePoint(CCPoint const& point) {
     return std::isfinite(point.x) && std::isfinite(point.y);
@@ -470,7 +471,32 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
 };
 
 
-// No CCSpriteBatchNode or texture-initialization hooks are installed.
+
+class $modify(GPUHelperSpriteBatchNodeBlendGuard, cocos2d::CCSpriteBatchNode) {
+    void updateBlendFunc() {
+        // Cocos2d's initWithTexture calls updateBlendFunc immediately after
+        // CCTextureAtlas::initWithTexture, but ignores that initializer's
+        // return value. If atlas initialization failed, getTexture() can be
+        // null and the stock method dereferences it in hasPremultipliedAlpha.
+        auto* atlas = this->m_pobTextureAtlas;
+        auto* texture = atlas ? atlas->getTexture() : nullptr;
+        if (!texture) {
+            if (!g_loggedMissingBatchTexture) {
+                g_loggedMissingBatchTexture = true;
+                log::error(
+                    "[GPU Helper] Prevented Cocos CCSpriteBatchNode::updateBlendFunc null-texture dereference; texture atlas initialization did not provide a texture."
+                );
+            }
+            // initWithTexture starts with the premultiplied-alpha blend func.
+            // Keep that default when there is no texture to inspect.
+            return;
+        }
+
+        cocos2d::CCSpriteBatchNode::updateBlendFunc();
+    }
+};
+
+// No CCSpriteBatchNode lifecycle or texture-initialization hooks are installed.
 // Geode creates CCLabelBMFont instances during startup through these Cocos
 // initialization paths; atlas culling only needs to intercept an atlas draw
 // after a PlayLayer has registered that atlas.

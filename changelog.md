@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.3
+- Guard the exact null dereference in Cocos' CCSpriteBatchNode::updateBlendFunc path. If texture-atlas initialization leaves no texture, GPU Helper keeps the initializer's default blend function rather than calling hasPremultipliedAlpha on a null pointer.
+- Valid texture initialization continues through the original Cocos blend-function implementation unchanged.
+- Keep texture-initialization hooks removed; record the missing-atlas-texture condition once in the Geode log.
+
+
 ## v0.5.2
 - Remove the speculative null-texture hooks on CCSpriteBatchNode::initWithTexture and CCTextureAtlas::initWithTexture. GPU Helper no longer intercepts Cocos texture initialization used by loading-screen bitmap fonts.
 - Move the OpenGL ES version probe until after a registered gameplay atlas produces a valid culling result; untracked loading-screen atlas draws now go directly to the original draw method.
