@@ -1,47 +1,39 @@
 # GPU Helper
 
-An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 experiment using Metal compute for a real, narrowly scoped gameplay workload.
+An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 Metal visibility-measurement and crash-diagnostics experiment.
 
-## Current milestone: GPU-assisted static decoration visibility (v0.3.7)
+## v0.3.8 — Safe diagnostic mode
 
-GPU Helper now uses Metal to evaluate camera intersection tests for ungrouped static decoration objects in the loaded level.
+This build removes the GameObject::visit override completely. The Metal kernel still measures whether eligible static-decoration bounds intersect the expanded camera view, but the result is not applied to the renderer. Geometry Dash keeps its normal drawing path. This is intentional because the reported fault was inside CCNode::visit; this build removes GPU Helper's render-time interception while gathering evidence.
 
-- At level setup, the mod gathers bounds of eligible static decorations once and uploads them to persistent shared Metal buffers.
-- During play, a Metal compute kernel tests those bounds against an expanded camera rectangle.
-- The dispatch is asynchronous. The gameplay thread does not wait for the GPU or read back a result synchronously.
-- Completed masks are applied to a GameObject visit hook. Only objects proven to be outside the expanded view are skipped during Cocos render traversal.
-- The camera rectangle has a 640-unit safety margin. Large camera jumps or zoom changes immediately clear the cull mask so drawing fails open.
-- Only objects marked as decorations, with the engine's static-decoration flag set and no group membership, are candidates.
-- If Metal initialization, buffer setup, dispatch, result validation, or the driver fails, the mod clears its cull mask and normal drawing continues.
+This is a stability and measurement build, not an FPS optimization release.
 
-What this does not do: it does not replace Geometry Dash's renderer, draw objects with Metal, change object visibility flags, remove objects, or alter player physics, collision, triggers, object updates, or level timing. Cocos2d remains responsible for drawing. On death, the PlayLayer and its static-object cache remain in place; the bounds are not rebuilt unless the level is exited and loaded again.
+## Metal workload
+- Detects the system Metal device with MTLCreateSystemDefaultDevice.
+- Builds the gpuhelper_cull_decoration_bounds compute pipeline.
+- Collects eligible ungrouped static-decoration bounds.
+- Uploads bounds to persistent shared Metal buffers.
+- Enqueues asynchronous MTLCommandBuffer compute dispatches.
+- Receives completed visibility masks and reports real counters.
+- Does not wait synchronously for the GPU.
+- Does not modify physics, collisions, triggers, object updates, or Cocos rendering.
 
-## Performance expectations
+The HUD separately counts total level objects, decoration-type objects, static-flagged decorations, ungrouped static decorations, valid bounds, submitted jobs, completed jobs, and returned visibility results.
 
-This is an experiment, not a guaranteed FPS boost. It is intended to reduce Cocos render traversal for levels with many eligible static decorations. Sparse levels or levels dominated by dynamic/grouped objects may see little or no benefit. The GPU dispatch itself also consumes GPU time, so on-device comparisons are required before calling it a net optimization.
+## Live diagnostics HUD
+The larger left-aligned text HUD refreshes every 0.25 seconds. HUD UPDATE proves the overlay update method is executing. DRIVER TICKS independently proves the measurement driver is updating.
 
-The diagnostics overlay attaches directly to Geometry Dash's screen-space PlayLayer HUD after setup completes. The text is larger (0.15 scale), white with a black letter shadow, and has no background panel. It separates the setting state from the pipeline state, shows the eligible static-decoration batch against the 96-object minimum, and explicitly reports whether a completed Metal visibility result has arrived. When active it reports visible and culled counts, the number of render traversals skipped, the last GPU execution time, CPU submission time, completed job count, total objects processed, and the 640-unit safety margin. A detected Metal device is not treated as proof of a completed GPU job. A changing HUD update counter (4 Hz) makes it obvious that the overlay itself is refreshing live.
+It reports device availability, setting state, per-level scan filter counts, batch size, submitted/completed GPU jobs, processed objects, visible/would-cull counts, and GPU/CPU submit timings.
 
-## Settings
+## Persistent crash diagnostics
+GPU Helper writes chronological diagnostics.log to its Geode mod save directory and mirrors events to the normal Geode log. Events include session start, HUD and driver attachment, PlayLayer setup/exit, scan results, Metal setup failures, dispatch failures, completed jobs, and HUD/driver heartbeats.
 
-- GPU-assisted static decoration culling — enabled by default; disable it to return to normal Cocos traversal. Toggling it on during an already-loaded level now initializes that level's static-decoration batch without requiring a level reload.
-- Show in-game GPU diagnostics overlay — shows the detailed live workload state and timing information.
+The file is capped at approximately 1 MiB; when exceeded, diagnostics.previous.log is rotated in. Logging is best-effort. This is a breadcrumb recorder, not a native crash catcher: it does not install signal handlers or attempt to recover from a segmentation fault.
 
-## Regression test
-
-The macOS Metal regression test covers the original multiply-add proof kernel and input validation, asynchronous decoration-bound visibility dispatch, exact inside/outside/intersection results, generation tracking, and completed-work counters.
-
-Run locally on a Mac with Xcode command-line tools and a Metal-capable device:
-
-    mkdir -p build
-    xcrun --sdk macosx clang++ -std=c++23 -fobjc-arc -Isrc \
-      src/gpu/MetalCompute.mm tests/metal_compute_regression.mm \
-      -framework Foundation -framework Metal \
-      -o build/metal-compute-regression
-    ./build/metal-compute-regression
+## Package size
+A .geode file is a compressed archive. The v0.3.7 build contained an approximately 245 KB uncompressed iOS dynamic library inside an approximately 61 KB compressed package. The small download size is compression, not a stub. This version adds a real logo.png icon and diagnostic functionality rather than artificial padding.
 
 ## Build target
-
 - Geometry Dash: 2.2081
 - Geode: 5.11.2
-- Target: iOS arm64
+- Platform: iOS arm64
