@@ -45,7 +45,6 @@ std::uint64_t g_resultFrame = 0;
 bool g_resultReady = false;
 gpuhelper::atlas::FrameStats g_frameStats;
 bool g_loggedGLVersion = false;
-bool g_loggedMissingBatchTexture = false;
 
 bool isFinitePoint(CCPoint const& point) {
     return std::isfinite(point.x) && std::isfinite(point.y);
@@ -419,6 +418,74 @@ FrameStats getFrameStats() {
 } // namespace gpuhelper::atlas
 
 class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
+    static void onModify(auto& self) {
+        if (!self.setHookPriorityPre(
+                "cocos2d::CCTextureAtlas::initWithTexture",
+                Priority::First)) {
+            log::warn(
+                "[GPU Helper] Could not set first priority for CCTextureAtlas::initWithTexture recovery."
+            );
+        }
+    }
+
+    bool initWithTexture(cocos2d::CCTexture2D* texture, unsigned int capacity) {
+        // Geode normally supplies its fallback texture in the
+        // CCSpriteBatchNode hook. Also handle any direct atlas initialization
+        // that reaches this method with a null texture.
+        if (!texture) {
+            auto* fallbackSprite =
+                cocos2d::CCSprite::create("__gpuhelper_missing_atlas_texture__.png");
+            texture = fallbackSprite ? fallbackSprite->getTexture() : nullptr;
+            if (!texture) {
+                log::error(
+                    "[GPU Helper] Could not obtain a fallback texture for CCTextureAtlas::initWithTexture."
+                );
+                return false;
+            }
+            log::warn(
+                "[GPU Helper] Replaced a null CCTextureAtlas initialization texture with Geode's fallback sprite texture."
+            );
+        }
+
+        bool const initialized =
+            cocos2d::CCTextureAtlas::initWithTexture(texture, capacity);
+        if (initialized) {
+            return true;
+        }
+
+        // Cocos clears its stored texture when atlas-buffer allocation fails,
+        // but CCSpriteBatchNode::initWithTexture ignores this false return and
+        // immediately dereferences atlas->getTexture() in updateBlendFunc.
+        // Restore the valid input texture before returning to that caller.
+        if (!this->getTexture()) {
+            this->setTexture(texture);
+        }
+
+        // Retry with progressively smaller storage. SpriteBatchNode grows the
+        // atlas again on demand if the label later adds more glyph quads.
+        unsigned int retryCapacity = capacity > 1 ? capacity / 2 : 0;
+        while (retryCapacity > 0) {
+            if (cocos2d::CCTextureAtlas::resizeCapacity(retryCapacity)) {
+                log::warn(
+                    "[GPU Helper] Recovered a failed texture-atlas initialization at reduced capacity {} (requested {}).",
+                    retryCapacity,
+                    capacity
+                );
+                return true;
+            }
+            if (retryCapacity == 1) {
+                break;
+            }
+            retryCapacity = std::max(1u, retryCapacity / 2);
+        }
+
+        log::error(
+            "[GPU Helper] CCTextureAtlas initialization failed even after reduced-capacity retries (requested {}).",
+            capacity
+        );
+        return false;
+    }
+
     void drawNumberOfQuads(unsigned int count, unsigned int start) {
         std::vector<gpuhelper::atlas::DrawRun> runs;
         if (!gpuhelper::atlas::buildVisibleRuns(this, count, start, runs)) {
@@ -471,30 +538,6 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
 };
 
 
-
-class $modify(GPUHelperSpriteBatchNodeBlendGuard, cocos2d::CCSpriteBatchNode) {
-    void updateBlendFunc() {
-        // Cocos2d's initWithTexture calls updateBlendFunc immediately after
-        // CCTextureAtlas::initWithTexture, but ignores that initializer's
-        // return value. If atlas initialization failed, getTexture() can be
-        // null and the stock method dereferences it in hasPremultipliedAlpha.
-        auto* atlas = this->m_pobTextureAtlas;
-        auto* texture = atlas ? atlas->getTexture() : nullptr;
-        if (!texture) {
-            if (!g_loggedMissingBatchTexture) {
-                g_loggedMissingBatchTexture = true;
-                log::error(
-                    "[GPU Helper] Prevented Cocos CCSpriteBatchNode::updateBlendFunc null-texture dereference; texture atlas initialization did not provide a texture."
-                );
-            }
-            // initWithTexture starts with the premultiplied-alpha blend func.
-            // Keep that default when there is no texture to inspect.
-            return;
-        }
-
-        cocos2d::CCSpriteBatchNode::updateBlendFunc();
-    }
-};
 
 // No CCSpriteBatchNode lifecycle or texture-initialization hooks are installed.
 // Geode creates CCLabelBMFont instances during startup through these Cocos

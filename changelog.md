@@ -1,9 +1,10 @@
 # Changelog
 
-## v0.5.3
-- Guard the exact null dereference in Cocos' CCSpriteBatchNode::updateBlendFunc path. If texture-atlas initialization leaves no texture, GPU Helper keeps the initializer's default blend function rather than calling hasPremultipliedAlpha on a null pointer.
-- Valid texture initialization continues through the original Cocos blend-function implementation unchanged.
-- Keep texture-initialization hooks removed; record the missing-atlas-texture condition once in the Geode log.
+## v0.5.4
+- Add a first-priority CCTextureAtlas::initWithTexture recovery hook: obtain Geode's fallback sprite texture if the input is null, restore the valid input texture if Cocos clears it after a buffer-allocation failure, and retry atlas allocation with smaller capacity.
+- Avoid hooking CCSpriteBatchNode::updateBlendFunc because Geode marks that method private and inline; the recovery runs before Cocos' unchecked blend calculation.
+- Keep CCSpriteBatchNode lifecycle and initWithTexture hooks removed.
+
 
 
 ## v0.5.2

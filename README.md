@@ -1,6 +1,6 @@
 # GPU Helper
 
-## v0.5.3 — guard the batch-node null-texture blend dereference
+## v0.5.4 — recover a missing or failed texture-atlas initialization
 
 The Geode setting **GPU Helper graphics path** now offers two paths:
 
@@ -11,7 +11,7 @@ The atlas path covers base, glow, and detail sprites because each rendered sprit
 
 OpenGL ES still submits the draw calls on the CPU: ES2 has no indirect-draw command path for Metal to issue. Metal performs the visibility calculation; the CPU reads the shared-storage result mask and converts it into ordered draw ranges. This is actual atlas draw culling, not a claim that Metal directly submits GL commands.
 
-GPU Helper does not hook `CCSpriteBatchNode::initWithTexture` or `CCTextureAtlas::initWithTexture`; those functions are part of the loading-screen bitmap-font initialization path. The OpenGL ES information probe runs only after a registered gameplay atlas has produced a valid culling run, so loading-screen font draws use the original atlas draw call without GPU Helper diagnostics. A narrow `CCSpriteBatchNode::updateBlendFunc` hook checks that the atlas and its texture exist before calling Cocos' original method; valid textures use the unchanged original blend calculation, while a missing texture keeps the premultiplied-alpha default and logs once.
+GPU Helper does not hook `CCSpriteBatchNode::initWithTexture` or `CCTextureAtlas::initWithTexture`; those functions are part of the loading-screen bitmap-font initialization path. The OpenGL ES information probe runs only after a registered gameplay atlas has produced a valid culling run, so loading-screen font draws use the original atlas draw call without GPU Helper diagnostics. A first-priority `CCTextureAtlas::initWithTexture` hook ensures a missing texture is replaced with Geode's fallback sprite texture. If Cocos fails atlas-buffer allocation and clears its stored texture, the hook restores the valid input texture before returning to `CCSpriteBatchNode::updateBlendFunc`, then retries with smaller atlas capacity so labels can still initialize. No `CCSpriteBatchNode` methods are hooked.
 
 The legacy path remains the default. This first GPU-driven implementation is experimental and needs on-device correctness/performance testing before it can be considered a stable optimization. No player physics, collisions, trigger ordering, or authoritative gameplay state are moved to the GPU.
 
