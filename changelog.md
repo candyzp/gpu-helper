@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.9
+- Use object-layer-local bounds directly when a decoration is already parented to the object layer, avoiding an unnecessary world-space round trip.
+- Add a clearly labeled detached-object bounds fallback for entries in PlayLayer::m_objects that have no Cocos parent; this is measurement-only and never affects rendering.
+- Track direct-layer, transformed-parent, detached-fallback, and invalid bounds separately in the HUD and persistent diagnostics.
+- Keep the GameObject render hook removed and preserve safe measurement-only behavior.
+
+
 ## v0.3.8
 - Added a bundled 256×256 root-level logo.png mod icon.
 - Removed the GameObject::visit render interception completely.

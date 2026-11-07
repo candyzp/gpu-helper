@@ -43,6 +43,9 @@ std::size_t g_levelObjectCount = 0;
 std::size_t g_decorationTypeCount = 0;
 std::size_t g_staticFlagCount = 0;
 std::size_t g_ungroupedStaticCount = 0;
+std::size_t g_directLayerBoundsCount = 0;
+std::size_t g_transformedBoundsCount = 0;
+std::size_t g_detachedFallbackBoundsCount = 0;
 std::size_t g_rejectedBoundsCount = 0;
 std::uint64_t g_submittedJobs = 0;
 std::uint64_t g_lastLoggedFailures = 0;
@@ -75,26 +78,55 @@ void clearCullingState(std::string const& status, PlayLayer* rememberedLayer = n
     g_havePreviousView = false;
 }
 
-bool buildObjectBounds(
+enum class BoundsBuildPath {
+    DirectObjectLayer,
+    TransformedParent,
+    DetachedFallback,
+    Invalid
+};
+
+BoundsBuildPath buildObjectBounds(
     GameObject* object,
     CCNode* objectLayer,
     gpuhelper::metal::ObjectBounds& output
 ) {
     if (!object || !objectLayer) {
-        return false;
+        return BoundsBuildPath::Invalid;
+    }
+
+    // boundingBox() is already axis-aligned in the node's parent coordinate
+    // space. Avoid a world-space round trip when that parent is objectLayer.
+    auto const rect = object->boundingBox();
+    float const rectMinX = rect.getMinX();
+    float const rectMinY = rect.getMinY();
+    float const rectMaxX = rect.getMaxX();
+    float const rectMaxY = rect.getMaxY();
+
+    if (!std::isfinite(rectMinX) || !std::isfinite(rectMinY) ||
+        !std::isfinite(rectMaxX) || !std::isfinite(rectMaxY) ||
+        rectMinX > rectMaxX || rectMinY > rectMaxY) {
+        return BoundsBuildPath::Invalid;
     }
 
     auto* parent = object->getParent();
-    if (!parent) {
-        return false;
+    if (parent == objectLayer) {
+        output = { rectMinX, rectMinY, rectMaxX, rectMaxY };
+        return BoundsBuildPath::DirectObjectLayer;
     }
 
-    auto const rect = object->boundingBox();
+    // Some entries in PlayLayer::m_objects can lack a Cocos parent. Their
+    // parent-relative bounds are treated as object-layer local coordinates
+    // for diagnostics only. This fallback never changes game rendering.
+    if (!parent) {
+        output = { rectMinX, rectMinY, rectMaxX, rectMaxY };
+        return BoundsBuildPath::DetachedFallback;
+    }
+
     CCPoint const corners[] = {
-        { rect.getMinX(), rect.getMinY() },
-        { rect.getMinX(), rect.getMaxY() },
-        { rect.getMaxX(), rect.getMinY() },
-        { rect.getMaxX(), rect.getMaxY() }
+        { rectMinX, rectMinY },
+        { rectMinX, rectMaxY },
+        { rectMaxX, rectMinY },
+        { rectMaxX, rectMaxY }
     };
 
     float minX = std::numeric_limits<float>::max();
@@ -106,7 +138,7 @@ bool buildObjectBounds(
         auto const world = parent->convertToWorldSpace(corner);
         auto const local = objectLayer->convertToNodeSpace(world);
         if (!finitePoint(local)) {
-            return false;
+            return BoundsBuildPath::Invalid;
         }
 
         minX = std::min(minX, local.x);
@@ -117,11 +149,11 @@ bool buildObjectBounds(
 
     if (!std::isfinite(minX) || !std::isfinite(minY) ||
         !std::isfinite(maxX) || !std::isfinite(maxY)) {
-        return false;
+        return BoundsBuildPath::Invalid;
     }
 
     output = { minX, minY, maxX, maxY };
-    return true;
+    return BoundsBuildPath::TransformedParent;
 }
 
 void configureDecorationCulling(PlayLayer* layer) {
@@ -133,6 +165,9 @@ void configureDecorationCulling(PlayLayer* layer) {
     g_decorationTypeCount = 0;
     g_staticFlagCount = 0;
     g_ungroupedStaticCount = 0;
+    g_directLayerBoundsCount = 0;
+    g_transformedBoundsCount = 0;
+    g_detachedFallbackBoundsCount = 0;
     g_rejectedBoundsCount = 0;
     if (!layer || !layer->m_objects || !layer->m_objectLayer) {
         g_cullStatus = "LEVEL DATA UNAVAILABLE";
@@ -157,10 +192,14 @@ void configureDecorationCulling(PlayLayer* layer) {
         if (object->m_groupCount != 0) continue;
         ++g_ungroupedStaticCount;
         gpuhelper::metal::ObjectBounds objectBounds;
-        if (!buildObjectBounds(object, layer->m_objectLayer, objectBounds)) {
+        auto const boundsPath = buildObjectBounds(object, layer->m_objectLayer, objectBounds);
+        if (boundsPath == BoundsBuildPath::Invalid) {
             ++g_rejectedBoundsCount;
             continue;
         }
+        if (boundsPath == BoundsBuildPath::DirectObjectLayer) ++g_directLayerBoundsCount;
+        else if (boundsPath == BoundsBuildPath::TransformedParent) ++g_transformedBoundsCount;
+        else if (boundsPath == BoundsBuildPath::DetachedFallback) ++g_detachedFallbackBoundsCount;
         bounds.push_back(objectBounds);
     }
 
@@ -171,6 +210,9 @@ void configureDecorationCulling(PlayLayer* layer) {
          << " decoration_type=" << g_decorationTypeCount
          << " static_flag=" << g_staticFlagCount
          << " ungrouped_static=" << g_ungroupedStaticCount
+         << " direct_layer_bounds=" << g_directLayerBoundsCount
+         << " transformed_bounds=" << g_transformedBoundsCount
+         << " detached_fallback_bounds=" << g_detachedFallbackBoundsCount
          << " valid_bounds=" << g_cullCandidateCount
          << " rejected_bounds=" << g_rejectedBoundsCount;
     diagnosticEvent(scan.str());
@@ -329,7 +371,7 @@ class GPUHelperDebugOverlay final : public CCNode {
         auto const stats = gpuhelper::metal::getStats();
         bool const enabled = Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
         std::ostringstream display;
-        display << "GPU HELPER v0.3.8 | SAFE DIAGNOSTIC MODE\n";
+        display << "GPU HELPER v0.3.9 | SAFE DIAGNOSTIC MODE\n";
         display << "HUD UPDATE: " << m_refreshCount << " | DRIVER TICKS: " << g_driverTicks << '\n';
         display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL: " << (g_metalAvailable ? "AVAILABLE" : "UNAVAILABLE")
@@ -338,8 +380,11 @@ class GPUHelperDebugOverlay final : public CCNode {
                 << " | OBJECTS: " << g_levelObjectCount << '\n';
         display << "DECOR TYPE: " << g_decorationTypeCount
                 << " | STATIC FLAG: " << g_staticFlagCount << '\n';
-        display << "UNGROUPED: " << g_ungroupedStaticCount
-                << " | REJECTED BOUNDS: " << g_rejectedBoundsCount << '\n';
+        display << "UNGROUPED: " << g_ungroupedStaticCount << '\n';
+        display << "BOUNDS: DIRECT " << g_directLayerBoundsCount
+                << " | TRANSFORMED " << g_transformedBoundsCount << '\n';
+        display << "DETACHED FALLBACK: " << g_detachedFallbackBoundsCount
+                << " | INVALID: " << g_rejectedBoundsCount << '\n';
         display << "ELIGIBLE: " << g_cullCandidateCount
                 << " / " << kMinimumDecorationBatch << " MIN\n";
         display << "GPU STATE: " << (enabled ? g_cullStatus : "DISABLED IN SETTINGS") << '\n';
@@ -489,7 +534,7 @@ public:
 } // namespace
 
 $on_mod(Loaded) {
-    diagnosticEvent("SESSION_START version=v0.3.8 mode=measure_only renderer_hook=removed");
+    diagnosticEvent("SESSION_START version=v0.3.9 mode=measure_only renderer_hook=removed");
     std::string error;
 
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);
