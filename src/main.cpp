@@ -1,10 +1,11 @@
 #include <Geode/Geode.hpp>
-#include <Geode/modify/GameObject.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 
 #include "gpu/MetalCompute.hpp"
+#include "Diagnostics.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
@@ -24,6 +25,29 @@ constexpr std::size_t kMinimumDecorationBatch = 96;
 constexpr std::size_t kMaximumDecorationBatch = 131072;
 constexpr float kCameraSafetyMargin = 640.0f;
 
+
+std::uint64_t g_diagnosticSequence = 0;
+auto const g_diagnosticSessionStart = std::chrono::steady_clock::now();
+void diagnosticEvent(std::string const& message) {
+    ++g_diagnosticSequence;
+    double const elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - g_diagnosticSessionStart
+    ).count();
+    std::ostringstream line;
+    line << std::fixed << std::setprecision(3)
+         << "+" << elapsed << "s #" << g_diagnosticSequence << " " << message;
+    log::info("[GPU Helper][DIAG] {}", line.str());
+    gpuhelper::diagnostics::append(line.str());
+}
+bool g_scanComplete = false;
+std::size_t g_levelObjectCount = 0;
+std::size_t g_decorationTypeCount = 0;
+std::size_t g_staticFlagCount = 0;
+std::size_t g_ungroupedStaticCount = 0;
+std::size_t g_rejectedBoundsCount = 0;
+std::uint64_t g_submittedJobs = 0;
+std::uint64_t g_lastLoggedCompletedJobs = 0;
+std::uint64_t g_driverTicks = 0;
 bool g_metalAvailable = false;
 std::string g_metalDeviceName = "Unknown";
 
@@ -108,69 +132,75 @@ bool buildObjectBounds(
 void configureDecorationCulling(PlayLayer* layer) {
     clearCullingState("BUILDING");
     g_cullLayer = layer;
-
+    g_scanComplete = false;
+    g_levelObjectCount = 0;
+    g_decorationTypeCount = 0;
+    g_staticFlagCount = 0;
+    g_ungroupedStaticCount = 0;
+    g_rejectedBoundsCount = 0;
     if (!layer || !layer->m_objects || !layer->m_objectLayer) {
         g_cullStatus = "LEVEL DATA UNAVAILABLE";
+        g_scanComplete = true;
+        diagnosticEvent("LEVEL_SCAN_FAILED missing_playlayer_objects_or_object_layer");
         return;
     }
 
     std::vector<gpuhelper::metal::ObjectBounds> bounds;
     auto* objects = layer->m_objects;
     auto const objectCount = objects->count();
+    g_levelObjectCount = objectCount;
     bounds.reserve(std::min<std::size_t>(
-        static_cast<std::size_t>(objectCount),
-        kMaximumDecorationBatch
-    ));
+        static_cast<std::size_t>(objectCount), kMaximumDecorationBatch));
     g_cullObjects.reserve(bounds.capacity());
 
     for (unsigned int i = 0; i < objectCount; ++i) {
         auto* object = static_cast<GameObject*>(objects->objectAtIndex(i));
-        if (!object ||
-            object->m_objectType != GameObjectType::Decoration ||
-            !object->m_isDecoration2 ||
-            object->m_groupCount != 0) {
-            continue;
-        }
-
-        if (g_cullObjects.size() >= kMaximumDecorationBatch) {
-            break;
-        }
-
+        if (!object || object->m_objectType != GameObjectType::Decoration) continue;
+        ++g_decorationTypeCount;
+        if (!object->m_isDecoration2) continue;
+        ++g_staticFlagCount;
+        if (object->m_groupCount != 0) continue;
+        ++g_ungroupedStaticCount;
+        if (g_cullObjects.size() >= kMaximumDecorationBatch) continue;
         gpuhelper::metal::ObjectBounds objectBounds;
         if (!buildObjectBounds(object, layer->m_objectLayer, objectBounds)) {
+            ++g_rejectedBoundsCount;
             continue;
         }
-
         g_cullObjects.push_back(object);
         bounds.push_back(objectBounds);
     }
 
     g_cullCandidateCount = g_cullObjects.size();
+    g_scanComplete = true;
+    std::ostringstream scan;
+    scan << "LEVEL_SCAN complete=1 objects=" << g_levelObjectCount
+         << " decoration_type=" << g_decorationTypeCount
+         << " static_flag=" << g_staticFlagCount
+         << " ungrouped_static=" << g_ungroupedStaticCount
+         << " valid_bounds=" << g_cullCandidateCount
+         << " rejected_bounds=" << g_rejectedBoundsCount;
+    diagnosticEvent(scan.str());
 
     if (g_cullCandidateCount < kMinimumDecorationBatch) {
         g_cullStatus = "NOT ENOUGH STATIC DECOR";
+        diagnosticEvent("GPU_SUBMIT_SKIPPED reason=batch_below_96");
         return;
     }
-
     std::string error;
     if (!gpuhelper::metal::configureDecorationCulling(
-            bounds.data(),
-            bounds.size(),
-            g_cullGeneration,
-            error)) {
+            bounds.data(), bounds.size(), g_cullGeneration, error)) {
         log::warn("[GPU Helper] Static decoration culling setup failed open: {}", error);
         clearCullingState("METAL SETUP FAILED", layer);
         g_cullCandidateCount = bounds.size();
+        diagnosticEvent("METAL_SETUP_FAILED reason=" + error);
         return;
     }
-
     g_cullConfigured = true;
-    g_cullStatus = "WARMING UP";
-    log::info(
-        "[GPU Helper] Metal decoration culling configured for {} static objects.",
-        g_cullCandidateCount
-    );
+    g_cullStatus = "WAITING FOR GPU RESULT";
+    diagnosticEvent("METAL_BATCH_CONFIGURED candidates=" + std::to_string(g_cullCandidateCount));
 }
+
 
 bool currentViewRect(
     CCNode* objectLayer,
@@ -236,7 +266,19 @@ void tickDecorationCulling(PlayLayer* layer) {
                 }
             }
 
-            g_cullStatus = "LIVE";
+            g_cullStatus = "MEASURED - RENDERING UNCHANGED";
+            diagnosticEvent(
+                "METAL_RESULT generation=" + std::to_string(completedGeneration) +
+                " visible=" + std::to_string(g_cullCandidateCount - g_cullCulledCount) +
+                " would_cull=" + std::to_string(g_cullCulledCount) +
+                " applied_to_renderer=0"
+            );
+        }
+        else {
+            diagnosticEvent("METAL_RESULT_REJECTED generation=" +
+                std::to_string(completedGeneration) +
+                " expected=" + std::to_string(g_cullGeneration) +
+                " result_count=" + std::to_string(completedMask.size()));
         }
     }
 
@@ -271,12 +313,27 @@ void tickDecorationCulling(PlayLayer* layer) {
     g_havePreviousView = true;
 
     std::string error;
-    if (!gpuhelper::metal::submitDecorationCulling(
-            view,
-            g_cullGeneration,
-            error) && !error.empty()) {
+    if (gpuhelper::metal::submitDecorationCulling(view, g_cullGeneration, error)) {
+        ++g_submittedJobs;
+    }
+    else if (!error.empty()) {
         log::warn("[GPU Helper] Metal decoration culling failed open: {}", error);
+        diagnosticEvent("METAL_DISPATCH_FAILED reason=" + error);
         clearCullingState("GPU DISPATCH FAILED", layer);
+    }
+    auto const stats = gpuhelper::metal::getStats();
+    if (stats.decorationCullDispatches > g_lastLoggedCompletedJobs) {
+        g_lastLoggedCompletedJobs = stats.decorationCullDispatches;
+        std::ostringstream event;
+        event << std::fixed << std::setprecision(4)
+              << "METAL_COMPLETED jobs=" << stats.decorationCullDispatches
+              << " processed=" << stats.totalDecorationObjectsProcessed
+              << " batch=" << stats.lastDecorationObjectCount
+              << " visible=" << stats.lastDecorationVisibleCount
+              << " gpu_ms=" << stats.lastDecorationCullGpuMilliseconds
+              << " submit_ms=" << stats.lastDecorationCullSubmitMilliseconds
+              << " applied_to_renderer=0";
+        diagnosticEvent(event.str());
     }
 }
 
@@ -289,157 +346,93 @@ class GPUHelperDebugOverlay final : public CCNode {
     CCLabelBMFont* m_shadowLabel = nullptr;
     float m_refreshElapsed = 0.0f;
     std::uint64_t m_refreshCount = 0;
-
     void refreshText() {
-        if (!m_label || !m_shadowLabel) {
-            return;
-        }
-
+        if (!m_label || !m_shadowLabel) return;
         auto const stats = gpuhelper::metal::getStats();
-        bool const cullingEnabled =
-            Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
-
+        bool const enabled = Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
         std::ostringstream display;
-        display << "GPU HELPER v0.3.7\n";
+        display << "GPU HELPER v0.3.8 | SAFE DIAGNOSTIC MODE\n";
+        display << "HUD UPDATE: " << m_refreshCount << " | DRIVER TICKS: " << g_driverTicks << '\n';
         display << "DEVICE: " << g_metalDeviceName << '\n';
-        display << "METAL DEVICE: " << (g_metalAvailable ? "FOUND" : "UNAVAILABLE") << '\n';
-        display << "SETTING: " << (cullingEnabled ? "ON" : "OFF")
-                << " | PIPELINE: "
-                << (!cullingEnabled ? "DISABLED" : (g_cullConfigured ? "READY" : "WAITING"))
-                << '\n';
-
-        if (!cullingEnabled) {
-            display << "STATIC: DISABLED IN SETTINGS\n";
-            display << "GPU RESULT: DISABLED\n";
-            display << "DRAW: NORMAL - NOTHING CULLED\n";
-        }
-        else if (g_cullConfigured) {
-            display << "STATIC: " << g_cullCandidateCount << " CANDIDATES (96 MIN)\n";
-            display << "GPU RESULT: "
-                    << (g_cullStatus == "LIVE" ? "ACTIVE" : g_cullStatus)
-                    << '\n';
-
-            std::size_t const visibleNow =
-                g_cullCandidateCount >= g_cullCulledCount
-                    ? g_cullCandidateCount - g_cullCulledCount
-                    : 0;
-            display << "MASK: " << visibleNow << " VISIBLE | "
-                    << g_cullCulledCount << " CULLED\n";
-            display << "DRAW: " << g_cullCulledCount << " OBJECTS SKIPPED\n";
-        }
-        else {
-            display << "STATIC: " << g_cullCandidateCount << " / "
-                    << kMinimumDecorationBatch << " MIN\n";
-
-            if (g_cullStatus == "NOT ENOUGH STATIC DECOR") {
-                display << "BATCH: TOO SMALL - NEED 96+\n";
-                display << "GPU RESULT: NO JOB SUBMITTED\n";
-            }
-            else if (g_cullStatus == "METAL SETUP FAILED") {
-                display << "BATCH: METAL SETUP FAILED\n";
-                display << "GPU RESULT: FAILED OPEN\n";
-            }
-            else {
-                display << "BATCH: WAITING FOR LEVEL SCAN\n";
-                display << "GPU RESULT: NOT RUN YET\n";
-            }
-
-            display << "DRAW: NORMAL - NOTHING CULLED\n";
-        }
-
+        display << "METAL: " << (g_metalAvailable ? "AVAILABLE" : "UNAVAILABLE")
+                << " | SETTING: " << (enabled ? "ON" : "OFF") << '\n';
+        display << "LEVEL SCAN: " << (g_scanComplete ? "COMPLETE" : "WAITING")
+                << " | OBJECTS: " << g_levelObjectCount << '\n';
+        display << "DECOR TYPE: " << g_decorationTypeCount
+                << " | STATIC FLAG: " << g_staticFlagCount << '\n';
+        display << "UNGROUPED: " << g_ungroupedStaticCount
+                << " | REJECTED BOUNDS: " << g_rejectedBoundsCount << '\n';
+        display << "ELIGIBLE: " << g_cullCandidateCount
+                << " / " << kMinimumDecorationBatch << " MIN\n";
+        display << "GPU STATE: " << (enabled ? g_cullStatus : "DISABLED IN SETTINGS") << '\n';
+        display << "GPU JOBS: " << stats.decorationCullDispatches
+                << " COMPLETE / " << g_submittedJobs << " SUBMITTED\n";
+        display << "PROCESSED: " << stats.totalDecorationObjectsProcessed << " TOTAL OBJECTS\n";
+        display << "VISIBILITY: " << (g_cullCandidateCount >= g_cullCulledCount
+                    ? g_cullCandidateCount - g_cullCulledCount : 0)
+                << " VISIBLE | " << g_cullCulledCount << " WOULD CULL\n";
         if (stats.decorationCullTimingAvailable) {
             display << std::fixed << std::setprecision(3)
-                    << "TIME: " << stats.lastDecorationCullGpuMilliseconds
-                    << "ms GPU | " << stats.lastDecorationCullSubmitMilliseconds
-                    << "ms SUBMIT\n";
-        }
-        else if (stats.decorationCullDispatches == 0) {
-            display << "TIME: WAITING FOR FIRST GPU JOB\n";
-        }
-        else {
-            display << std::fixed << std::setprecision(3)
-                    << "TIME: GPU N/A | " << stats.lastDecorationCullSubmitMilliseconds
-                    << "ms SUBMIT\n";
-        }
-
-        display << "TOTAL: " << stats.decorationCullDispatches
-                << " JOBS | " << stats.totalDecorationObjectsProcessed
-                << " OBJECTS\n";
-        display << "SAFETY: 640u MARGIN | FAIL-OPEN\n";
-        display << "HUD UPDATE: " << ++m_refreshCount << " | REFRESH: 4 HZ";
-
+                    << "TIMING: " << stats.lastDecorationCullGpuMilliseconds
+                    << "ms GPU | " << stats.lastDecorationCullSubmitMilliseconds << "ms SUBMIT\n";
+        } else display << "TIMING: WAITING FOR COMPLETED GPU JOB\n";
+        display << "RENDER HOOK: REMOVED - GAME DRAWING UNCHANGED\n";
+        display << "CRASH TRACE: PERSISTENT LOG ENABLED\n";
+        display << "LOG EVENTS: " << g_diagnosticSequence;
         auto const text = display.str();
         m_shadowLabel->setString(text.c_str());
         m_label->setString(text.c_str());
     }
-
 public:
     static GPUHelperDebugOverlay* create() {
         auto* ret = new GPUHelperDebugOverlay();
-        if (ret && ret->init()) {
-            ret->autorelease();
-            return ret;
-        }
-
+        if (ret && ret->init()) { ret->autorelease(); return ret; }
         CC_SAFE_DELETE(ret);
         return nullptr;
     }
-
     bool init() {
-        if (!CCNode::init()) {
-            return false;
-        }
-
+        if (!CCNode::init()) return false;
         auto const winSize = CCDirector::sharedDirector()->getWinSize();
-
-        // Compact text-only HUD. The offset black copy is a letter shadow,
-        // not a panel; no opaque background node is created.
         m_shadowLabel = CCLabelBMFont::create("", "bigFont.fnt");
         m_label = CCLabelBMFont::create("", "bigFont.fnt");
-        if (!m_shadowLabel || !m_label) {
-            return false;
-        }
-
-        constexpr float kOverlayScale = 0.15f;
-        m_shadowLabel->setAnchorPoint({1.0f, 1.0f});
-        m_shadowLabel->setPosition({winSize.width - 13.0f, winSize.height - 24.0f});
+        if (!m_shadowLabel || !m_label) return false;
+        constexpr float kOverlayScale = 0.20f;
+        m_shadowLabel->setAnchorPoint({0.0f, 1.0f});
+        m_shadowLabel->setPosition({26.0f, winSize.height - 26.0f});
         m_shadowLabel->setScale(kOverlayScale);
         m_shadowLabel->setColor(ccc3(0, 0, 0));
-        m_shadowLabel->setOpacity(220);
+        m_shadowLabel->setOpacity(230);
         this->addChild(m_shadowLabel, 0);
-
-        m_label->setAnchorPoint({1.0f, 1.0f});
-        m_label->setPosition({winSize.width - 14.0f, winSize.height - 23.0f});
+        m_label->setAnchorPoint({0.0f, 1.0f});
+        m_label->setPosition({24.0f, winSize.height - 24.0f});
         m_label->setScale(kOverlayScale);
         m_label->setColor(ccc3(255, 255, 255));
-        m_label->setOpacity(245);
+        m_label->setOpacity(255);
         this->addChild(m_label, 1);
-
         this->scheduleUpdate();
         refreshText();
+        diagnosticEvent("HUD_CREATED scale=0.20 refresh_interval=0.25s");
         return true;
     }
-
     void update(float dt) override {
         CCNode::update(dt);
-
         bool const enabled = Mod::get()->getSettingValue<bool>("debug-overlay");
         this->setVisible(enabled);
-        if (!enabled) {
-            return;
-        }
-
+        if (!enabled) return;
         m_refreshElapsed += dt;
-        if (m_refreshElapsed < 0.25f) {
-            return;
-        }
-
+        if (m_refreshElapsed < 0.25f) return;
         m_refreshElapsed = 0.0f;
+        ++m_refreshCount;
         refreshText();
+        if ((m_refreshCount % 8u) == 0u) {
+            diagnosticEvent("HUD_HEARTBEAT updates=" + std::to_string(m_refreshCount) +
+                " driver_ticks=" + std::to_string(g_driverTicks));
+        }
     }
 };
 
 class GPUHelperCullingDriver final : public CCNode {
+    float m_heartbeatElapsed = 0.0f;
 public:
     static GPUHelperCullingDriver* create() {
         auto* ret = new GPUHelperCullingDriver();
@@ -463,7 +456,7 @@ public:
 
     void update(float dt) override {
         CCNode::update(dt);
-
+        ++g_driverTicks;
         auto* layer = PlayLayer::get();
         if (!layer) {
             return;
@@ -495,27 +488,26 @@ public:
         tickDecorationCulling(layer);
     }
 
-    void onExit() override {
-        clearCullingState("OFF");
-        CCNode::onExit();
-    }
+
+        m_heartbeatElapsed += dt;
+        if (m_heartbeatElapsed >= 2.0f) {
+            m_heartbeatElapsed = 0.0f;
+            auto const stats = gpuhelper::metal::getStats();
+            std::ostringstream event;
+            event << "DRIVER_HEARTBEAT ticks=" << g_driverTicks
+                  << " configured=" << (g_cullConfigured ? "yes" : "no")
+                  << " status=" << g_cullStatus
+                  << " eligible=" << g_cullCandidateCount
+                  << " submitted=" << g_submittedJobs
+                  << " completed=" << stats.decorationCullDispatches;
+            diagnosticEvent(event.str());
+        }
 };
 
 } // namespace
 
-class $modify(GPUHelperGameObject, GameObject) {
-    void visit() {
-        // Skip only the render traversal for GPU-culled, static decorations.
-        // Object updates, triggers, collision state, and player physics continue.
-        if (g_cullConfigured && isDecorationCulled(this)) {
-            return;
-        }
-
-        GameObject::visit();
-    }
-};
-
 $on_mod(Loaded) {
+    diagnosticEvent("SESSION_START version=v0.3.8 mode=measure_only renderer_hook=removed");
     std::string error;
 
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);
@@ -540,6 +532,8 @@ $on_mod(Loaded) {
 class $modify(GPUHelperPlayLayer, PlayLayer) {
     void setupHasCompleted() {
         PlayLayer::setupHasCompleted();
+        diagnosticEvent("PLAYLAYER_SETUP objects=" +
+            std::to_string(this->m_objects ? this->m_objects->count() : 0));
 
         // The HUD is Geometry Dash's screen-space layer. Parenting the panel
         // here keeps it above the camera/world layers and on screen.
@@ -559,30 +553,33 @@ class $modify(GPUHelperPlayLayer, PlayLayer) {
             }
         }
 
-        auto* scene = CCDirector::sharedDirector()->getRunningScene();
-        if (!scene) {
-            log::warn("[GPU Helper] Could not attach GPU culling driver: no running scene.");
-            return;
-        }
 
+        if (!uiLayer->getChildByTag(kCullingDriverTag)) {
+            auto* driver = GPUHelperCullingDriver::create();
+            if (driver) {
+                driver->setTag(kCullingDriverTag);
+                uiLayer->addChild(driver, 1000001);
+                diagnosticEvent("DRIVER_ATTACHED parent=PlayLayer.m_uiLayer");
+            }
+            else {
+                clearCullingState("DRIVER UNAVAILABLE", this);
+                diagnosticEvent("DRIVER_CREATE_FAILED");
+            }
+        }
         if (Mod::get()->getSettingValue<bool>("gpu-decoration-culling")) {
             configureDecorationCulling(this);
         }
         else {
             clearCullingState("OFF", this);
+            diagnosticEvent("CULLING_SETTING disabled_at_level_setup");
         }
 
-        if (!scene->getChildByTag(kCullingDriverTag)) {
-            auto* driver = GPUHelperCullingDriver::create();
-            if (driver) {
-                driver->setTag(kCullingDriverTag);
-                scene->addChild(driver, 1000001);
-                log::info("[GPU Helper] GPU decoration culling driver attached.");
-            }
-            else {
-                clearCullingState("DRIVER UNAVAILABLE", this);
-                log::warn("[GPU Helper] Failed to create GPU culling driver; normal drawing remains enabled.");
-            }
-        }
     }
+    void onExit() {
+        diagnosticEvent("PLAYLAYER_EXIT begin");
+        clearCullingState("LEVEL EXIT");
+        PlayLayer::onExit();
+        diagnosticEvent("PLAYLAYER_EXIT complete");
+    }
+
 };
