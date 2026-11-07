@@ -24,7 +24,6 @@ namespace {
 constexpr int kDebugOverlayTag = 0x475055;
 constexpr int kCullingDriverTag = 0x475043;
 constexpr int kInteropProbeTag = 0x475049;
-constexpr std::size_t kMinimumDecorationBatch = 96;
 constexpr std::size_t kMaximumDecorationBatch = 524288;
 constexpr float kCameraSafetyMargin = 640.0f;
 
@@ -388,9 +387,11 @@ void configureDecorationCulling(PlayLayer* layer) {
         diagnosticEvent(scan.str());
     }
 
-    if (g_cullCandidateCount < kMinimumDecorationBatch) {
-        g_cullStatus = "NOT ENOUGH STATIC DECOR";
-        diagnosticEvent("GPU_SUBMIT_SKIPPED reason=batch_below_96");
+    // Legacy mode measures every non-empty eligible batch. The old
+    // 96-object threshold silently skipped smaller levels and decoration sets.
+    if (bounds.empty()) {
+        g_cullStatus = "NO STATIC DECOR";
+        diagnosticEvent("GPU_SUBMIT_SKIPPED reason=no_eligible_static_decorations");
         return;
     }
     std::string error;
@@ -599,7 +600,7 @@ class GPUHelperDebugOverlay final : public CCNode {
         display << "DETACHED FALLBACK: " << g_detachedFallbackBoundsCount
                 << " | INVALID: " << g_rejectedBoundsCount << '\n';
         display << "ELIGIBLE: " << g_cullCandidateCount
-                << " / " << kMinimumDecorationBatch << " MIN\n";
+                << " STATIC DECORATIONS\n";
         display << "GPU STATE: " << (enabled ? g_cullStatus : "DISABLED IN SETTINGS") << '\n';
         display << "GPU JOBS: " << stats.decorationCullDispatches
                 << " COMPLETE / " << g_submittedJobs << " SUBMITTED\n";
