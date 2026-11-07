@@ -468,69 +468,8 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
 };
 
 
-class $modify(GPUHelperSpriteBatchNode, cocos2d::CCSpriteBatchNode) {
-    void addChild(cocos2d::CCNode* child) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::addChild(child);
-    }
-
-    void addChild(cocos2d::CCNode* child, int zOrder) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::addChild(child, zOrder);
-    }
-
-    void addChild(cocos2d::CCNode* child, int zOrder, int tag) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::addChild(child, zOrder, tag);
-    }
-
-    void removeChild(cocos2d::CCNode* child, bool cleanup) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::removeChild(child, cleanup);
-    }
-
-    void removeAllChildrenWithCleanup(bool cleanup) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::removeAllChildrenWithCleanup(cleanup);
-    }
-
-    void reorderChild(cocos2d::CCNode* child, int zOrder) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::reorderChild(child, zOrder);
-    }
-
-    void sortAllChildren() {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::sortAllChildren();
-    }
-
-    void appendChild(cocos2d::CCSprite* sprite) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::appendChild(sprite);
-    }
-
-    void removeSpriteFromAtlas(cocos2d::CCSprite* sprite) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::removeSpriteFromAtlas(sprite);
-    }
-
-    void reorderBatch(bool reorder) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::reorderBatch(reorder);
-    }
-
-    void manualSortAllChildren() {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::manualSortAllChildren();
-    }
-
-    void increaseAtlasCapacity() {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::increaseAtlasCapacity();
-    }
-
-    void increaseAtlasCapacity(unsigned int amount) {
-        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
-        cocos2d::CCSpriteBatchNode::increaseAtlasCapacity(amount);
-    }
-};
+// Deliberately do not hook CCSpriteBatchNode lifecycle methods. They run during
+// loading/UI construction as well as gameplay; the first device launch exposed
+// a startup regression in that broad hook surface. Atlas-native mutators above
+// still invalidate inserts/removals/capacity changes without changing batch-node
+// initialization or label creation.
