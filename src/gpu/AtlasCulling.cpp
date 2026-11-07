@@ -418,35 +418,16 @@ FrameStats getFrameStats() {
 } // namespace gpuhelper::atlas
 
 class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
-    static void onModify(auto& self) {
-        if (!self.setHookPriorityPre(
-                "cocos2d::CCTextureAtlas::initWithTexture",
-                Priority::First)) {
-            log::warn(
-                "[GPU Helper] Could not set first priority for CCTextureAtlas::initWithTexture null guard."
-            );
-        }
-    }
-
-    bool initWithTexture(cocos2d::CCTexture2D* texture, unsigned int capacity) {
-        if (!texture) {
-            log::error(
-                "[GPU Helper] Rejected CCTextureAtlas::initWithTexture(nullptr, {}) before other hooks/original.",
-                capacity
-            );
-            return false;
-        }
-        return cocos2d::CCTextureAtlas::initWithTexture(texture, capacity);
-    }
-
     void drawNumberOfQuads(unsigned int count, unsigned int start) {
-        logOpenGLESVersionOnce();
-
         std::vector<gpuhelper::atlas::DrawRun> runs;
         if (!gpuhelper::atlas::buildVisibleRuns(this, count, start, runs)) {
             cocos2d::CCTextureAtlas::drawNumberOfQuads(count, start);
             return;
         }
+
+        // Only inspect the GL context after a tracked gameplay atlas is actually
+        // being culled. Loading-screen bitmap-font atlases always take the
+        // untouched original draw path above.
 
         // Replaying contiguous atlas ranges preserves the original atlas order,
         // texture, blend state, and Cocos shader state established by the batch node.
@@ -458,8 +439,8 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
     }
 
     void updateQuad(cocos2d::ccV3F_C4B_T2F_Quad* quad, unsigned int index) {
-        gpuhelper::atlas::markQuadUpdated(this, index);
         cocos2d::CCTextureAtlas::updateQuad(quad, index);
+        gpuhelper::atlas::markQuadUpdated(this, index);
     }
 
     void insertQuad(cocos2d::ccV3F_C4B_T2F_Quad* quad, unsigned int index) {
@@ -489,29 +470,7 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
 };
 
 
-class $modify(GPUHelperSpriteBatchNodeInitGuard, cocos2d::CCSpriteBatchNode) {
-    static void onModify(auto& self) {
-        if (!self.setHookPriorityPre(
-                "cocos2d::CCSpriteBatchNode::initWithTexture",
-                Priority::First)) {
-            log::warn(
-                "[GPU Helper] Could not set first priority for CCSpriteBatchNode::initWithTexture null guard."
-            );
-        }
-    }
-
-    bool initWithTexture(cocos2d::CCTexture2D* texture, unsigned int capacity) {
-        if (!texture) {
-            log::error(
-                "[GPU Helper] Rejected CCSpriteBatchNode::initWithTexture(nullptr, {}) before other hooks/original.",
-                capacity
-            );
-            return false;
-        }
-        return cocos2d::CCSpriteBatchNode::initWithTexture(texture, capacity);
-    }
-};
-
-// These are narrow null-argument guards only. No child, sort, reorder, or
-// capacity lifecycle hooks are installed on CCSpriteBatchNode. Returning false
-// for a null texture prevents the Cocos init path from dereferencing it.
+// No CCSpriteBatchNode or texture-initialization hooks are installed.
+// Geode creates CCLabelBMFont instances during startup through these Cocos
+// initialization paths; atlas culling only needs to intercept an atlas draw
+// after a PlayLayer has registered that atlas.

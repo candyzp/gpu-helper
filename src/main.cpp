@@ -469,7 +469,7 @@ class GPUHelperDebugOverlay final : public CCNode {
         auto const stats = gpuhelper::metal::getStats();
         bool const enabled = Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
         std::ostringstream display;
-        display << "GPU HELPER v0.5.0 | ATLAS CULLING\n";
+        display << "GPU HELPER v0.5.2 | ATLAS CULLING\n";
         display << "HUD UPDATE: " << m_refreshCount << " | DRIVER TICKS: " << g_driverTicks << '\n';
         display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL: " << (g_metalAvailable ? "AVAILABLE" : "UNAVAILABLE")
@@ -693,7 +693,7 @@ public:
 } // namespace
 
 $on_mod(Loaded) {
-    diagnosticEvent("SESSION_START version=v0.5.1 mode=legacy_or_gpu_driven atlas_hook=CCTextureAtlas::drawNumberOfQuads init_texture_guard=first_null_reject");
+    diagnosticEvent("SESSION_START version=v0.5.2 mode=legacy_or_gpu_driven atlas_hook=drawNumberOfQuads startup_texture_hooks=none gl_probe=active_culling_only");
     std::string error;
 
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);

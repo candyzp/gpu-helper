@@ -1,15 +1,17 @@
 # GPU Helper
 
-## v0.5.1 — startup null-texture guard and GPU-assisted atlas draw-range culling
+## v0.5.2 — keep startup font initialization outside GPU Helper hooks
 
 The Geode setting **GPU Helper graphics path** now offers two paths:
 
 - **legacy** — the previous Metal decoration-visibility measurement. It does not alter rendering.
 - **gpu-driven** — builds conservative bounds from the actual quads stored in each CCTextureAtlas, runs the existing Metal bounds kernel, and consumes a completed mask in the CCTextureAtlas::drawNumberOfQuads(count, start) hook. The hook emits contiguous visible atlas ranges in ascending atlas order.
 
-The atlas path covers base, glow, and detail sprites because each rendered sprite quad is considered independently. A quad updated after the level scan is permanently treated as dynamic and remains visible. Atlas insert/remove/reorder/capacity changes invalidate that atlas for the rest of the level. Batch-node transform changes, missing/stale masks, invalid indices, and Metal failures all use the original full draw. A delayed mask is reused only while the current viewport remains inside the exact expanded region tested by Metal.
+The atlas path covers base, glow, and detail sprites because each rendered sprite quad is considered independently. A quad updated after the level scan is permanently treated as dynamic and remains visible. Atlas insert/remove/capacity changes invalidate that atlas for the rest of the level. Batch-node transform changes, missing/stale masks, invalid indices, and Metal failures all use the original full draw. A delayed mask is reused only while the current viewport remains inside the exact expanded region tested by Metal.
 
 OpenGL ES still submits the draw calls on the CPU: ES2 has no indirect-draw command path for Metal to issue. Metal performs the visibility calculation; the CPU reads the shared-storage result mask and converts it into ordered draw ranges. This is actual atlas draw culling, not a claim that Metal directly submits GL commands.
+
+GPU Helper does not hook `CCSpriteBatchNode::initWithTexture` or `CCTextureAtlas::initWithTexture`; those functions are part of the loading-screen bitmap-font initialization path. The OpenGL ES information probe runs only after a registered gameplay atlas has produced a valid culling run, so loading-screen font draws use the original atlas draw call without GPU Helper diagnostics.
 
 The legacy path remains the default. This first GPU-driven implementation is experimental and needs on-device correctness/performance testing before it can be considered a stable optimization. No player physics, collisions, trigger ordering, or authoritative gameplay state are moved to the GPU.
 

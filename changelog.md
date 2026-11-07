@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.2
+- Remove the speculative null-texture hooks on CCSpriteBatchNode::initWithTexture and CCTextureAtlas::initWithTexture. GPU Helper no longer intercepts Cocos texture initialization used by loading-screen bitmap fonts.
+- Move the OpenGL ES version probe until after a registered gameplay atlas produces a valid culling result; untracked loading-screen atlas draws now go directly to the original draw method.
+- Keep broad CCSpriteBatchNode lifecycle hooks removed and preserve the GPU-driven atlas culling path.
+
+
 ## v0.5.1
 - Add first-priority null-texture guards to CCSpriteBatchNode::initWithTexture and CCTextureAtlas::initWithTexture, preventing a null texture from reaching Cocos code that dereferences it.
 - Keep the existing atlas draw-range culling implementation and remove no additional batch-node lifecycle hooks.
