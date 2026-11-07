@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.5
+- Upgrade persistent diagnostics with a detailed crash-state snapshot: build/loader/game versions, iOS/kernel and hardware model, loaded mod versions, settings, Metal counters/errors, last viewport, culling state, atlas draw statistics, and recent breadcrumbs.
+- Preserve the previous session's last snapshot and write a session marker. A prior RUNNING marker indicates abnormal termination, OS kill, or force close, not proof of a crash.
+- Refresh snapshots at startup, PlayLayer transitions, and two-second gameplay heartbeats.
+- Trace the first 48 CCTextureAtlas::initWithTexture calls with input texture address, requested capacity, result, output texture state, retry capacity, and fatal recovery details.
+- Preserve Geode's native crash reporter; no competing fatal-signal handler is installed.
+
+
 ## v0.5.4
 - Add a first-priority CCTextureAtlas::initWithTexture recovery hook: obtain Geode's fallback sprite texture if the input is null, restore the valid input texture if Cocos clears it after a buffer-allocation failure, and retry atlas allocation with smaller capacity.
 - Avoid hooking CCSpriteBatchNode::updateBlendFunc because Geode marks that method private and inline; the recovery runs before Cocos' unchecked blend calculation.

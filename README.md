@@ -1,6 +1,6 @@
 # GPU Helper
 
-## v0.5.4 — recover a missing or failed texture-atlas initialization
+## v0.5.5 — extended crash snapshots and startup atlas tracing
 
 The Geode setting **GPU Helper graphics path** now offers two paths:
 
@@ -52,11 +52,27 @@ It reports:
 
 ## Persistent crash diagnostics
 
-GPU Helper mirrors diagnostic events to the normal Geode log and writes a chronological diagnostics.log in its Geode mod save directory. It records session start, device detection, settings, level-scan start and completion, candidate filter counts, Metal setup/dispatch errors, asynchronous completion results and failures, HUD heartbeats, driver heartbeats, and level exit.
+GPU Helper mirrors diagnostic events to the normal Geode log and writes a chronological diagnostics.log in its Geode mod save directory. It records session start, device detection, settings, level-scan start and completion, candidate filter counts, Metal setup/dispatch errors, asynchronous completion results and failures, HUD heartbeats, driver heartbeats, and level exit. It also writes full crash-state snapshots, prior-session markers, and detailed atlas initialization traces (see Extended crash diagnostics).
 
 Driver and HUD heartbeats are aggregated at roughly two-second intervals so the trace remains useful without writing one line for every rendered frame or every GPU submission. Event lines include monotonic elapsed time and a sequence number. The log is capped at approximately 1 MiB; when exceeded, diagnostics.previous.log is rotated in. Storage errors are caught so logging cannot interrupt gameplay.
 
 This is a persistent breadcrumb recorder, not a native crash catcher. It does not install unsafe signal handlers or claim to recover from segmentation faults. Its purpose is to preserve the last known mod state for correlation with a Geode crash report.
+
+## Extended crash diagnostics
+
+The extended debugger is always enabled and deliberately leaves Geode's native crash reporter and fatal-signal handlers untouched. Geode remains responsible for native exception/signal, register, and stack-trace capture. GPU Helper adds persistent state to correlate with that report:
+
+- \`diagnostics.log\`: chronological event stream with sequence numbers and the most recent 64 events mirrored to disk. It rotates at 2 MiB to \`diagnostics.previous.log\`.
+- \`crash-state.latest.log\`: atomically replaced full-state snapshot, refreshed at startup, important PlayLayer transitions, and every two-second gameplay-driver heartbeat.
+- \`crash-state.previous.log\`: last full snapshot from the previous session, preserved when a new session starts.
+- \`session.state\`: indicates whether the previous process reached normal C runtime exit handlers. A stale \`STATE=RUNNING\` marker means abnormal process termination, OS kill, or force close; it is not proof of a crash.
+- \`ATLAS_INIT_*\` records: trace the first 48 texture-atlas initialization calls, including input texture address, requested capacity, Cocos success/failure, post-init texture state, reduced-capacity retry, and fatal-recovery stage.
+
+Snapshots include mod/Geode/game versions, iOS product version and kernel, hardware model identifier, loaded mod versions, settings, Metal device and failure counters, last camera rectangle, culling generation/status, atlas draw counters, last diagnostic event, and recent breadcrumbs.
+
+All files are written under the Geode save directory for \`candyzp.gpuhelper\`. The in-game HUD identifies the extended debugger. When reporting a crash, provide the Geode crash report plus \`crash-state.latest.log\`, \`crash-state.previous.log\`, and the end of \`diagnostics.log\` from that directory.
+
+This is persistent crash context, not a replacement native debugger. It does not install a SIGSEGV handler: competing with Geode's handler could make its native backtrace/register report worse. A process killed before normal exit handlers run leaves a detectable incomplete-session marker.
 
 ## Icon and package size
 

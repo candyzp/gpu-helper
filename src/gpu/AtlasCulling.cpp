@@ -1,6 +1,7 @@
 #include "AtlasCulling.hpp"
 
 #include <Geode/Geode.hpp>
+#include "../Diagnostics.hpp"
 #include <Geode/modify/CCTextureAtlas.hpp>
 #include <Geode/modify/CCSpriteBatchNode.hpp>
 #include <OpenGLES/ES2/gl.h>
@@ -447,11 +448,52 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
             );
         }
 
+        static std::uint64_t traceSequence = 0;
+        auto const sequence = ++traceSequence;
+        auto const textureAddress = reinterpret_cast<std::uintptr_t>(texture);
+        gpuhelper::diagnostics::append(
+            "ATLAS_INIT_BEGIN seq=" + std::to_string(sequence) +
+            " input_texture_address=" + std::to_string(textureAddress) +
+            " capacity=" + std::to_string(capacity)
+        );
+        if (sequence <= 48) {
+            gpuhelper::diagnostics::writeCrashSnapshot(
+                "GPU HELPER ATLAS INITIALIZATION TRACE\n"
+                "STAGE=CCTextureAtlas::initWithTexture_BEGIN\n"
+                "SEQUENCE=" + std::to_string(sequence) +
+                "\nINPUT_TEXTURE_ADDRESS=" + std::to_string(textureAddress) +
+                "\nREQUESTED_CAPACITY=" + std::to_string(capacity) +
+                "\nRECENT_EVENTS:\n" + gpuhelper::diagnostics::recentEvents()
+            );
+        }
+
         bool const initialized =
             cocos2d::CCTextureAtlas::initWithTexture(texture, capacity);
         if (initialized) {
+            auto const outputTexture = reinterpret_cast<std::uintptr_t>(this->getTexture());
+            gpuhelper::diagnostics::append(
+                "ATLAS_INIT_RESULT seq=" + std::to_string(sequence) +
+                " initialized=1 output_texture_address=" + std::to_string(outputTexture) +
+                " capacity=" + std::to_string(capacity)
+            );
+            if (sequence <= 48) {
+                gpuhelper::diagnostics::writeCrashSnapshot(
+                    "GPU HELPER ATLAS INITIALIZATION TRACE\n"
+                    "STAGE=CCTextureAtlas::initWithTexture_SUCCESS\n"
+                    "SEQUENCE=" + std::to_string(sequence) +
+                    "\nREQUESTED_CAPACITY=" + std::to_string(capacity) +
+                    "\nOUTPUT_TEXTURE_PRESENT=" + (this->getTexture() ? "yes" : "no") +
+                    "\nRECENT_EVENTS:\n" + gpuhelper::diagnostics::recentEvents()
+                );
+            }
             return true;
         }
+        gpuhelper::diagnostics::append(
+            "ATLAS_INIT_RESULT seq=" + std::to_string(sequence) +
+            " initialized=0 output_texture_present=" +
+            (this->getTexture() ? "yes" : "no") +
+            " requested_capacity=" + std::to_string(capacity)
+        );
 
         // Cocos clears its stored texture when atlas-buffer allocation fails,
         // but CCSpriteBatchNode::initWithTexture ignores this false return and
@@ -466,6 +508,22 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
         unsigned int retryCapacity = capacity > 1 ? capacity / 2 : 0;
         while (retryCapacity > 0) {
             if (cocos2d::CCTextureAtlas::resizeCapacity(retryCapacity)) {
+                gpuhelper::diagnostics::append(
+                    "ATLAS_INIT_RECOVERED seq=" + std::to_string(sequence) +
+                    " retry_capacity=" + std::to_string(retryCapacity) +
+                    " requested_capacity=" + std::to_string(capacity)
+                );
+                if (sequence <= 48) {
+                    gpuhelper::diagnostics::writeCrashSnapshot(
+                        "GPU HELPER ATLAS INITIALIZATION TRACE\n"
+                        "STAGE=CCTextureAtlas::initWithTexture_RECOVERED\n"
+                        "SEQUENCE=" + std::to_string(sequence) +
+                        "\nREQUESTED_CAPACITY=" + std::to_string(capacity) +
+                        "\nRETRY_CAPACITY=" + std::to_string(retryCapacity) +
+                        "\nTEXTURE_PRESENT=" + (this->getTexture() ? "yes" : "no") +
+                        "\nRECENT_EVENTS:\n" + gpuhelper::diagnostics::recentEvents()
+                    );
+                }
                 log::warn(
                     "[GPU Helper] Recovered a failed texture-atlas initialization at reduced capacity {} (requested {}).",
                     retryCapacity,
@@ -479,6 +537,19 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
             retryCapacity = std::max(1u, retryCapacity / 2);
         }
 
+        gpuhelper::diagnostics::append(
+            "ATLAS_INIT_FATAL seq=" + std::to_string(sequence) +
+            " reason=reduced_capacity_retries_exhausted requested_capacity=" +
+            std::to_string(capacity)
+        );
+        gpuhelper::diagnostics::writeCrashSnapshot(
+            "GPU HELPER ATLAS INITIALIZATION FAILURE\n"
+            "STAGE=CCTextureAtlas::initWithTexture_FATAL\n"
+            "SEQUENCE=" + std::to_string(sequence) +
+            "\nREQUESTED_CAPACITY=" + std::to_string(capacity) +
+            "\nTEXTURE_PRESENT=" + (this->getTexture() ? "yes" : "no") +
+            "\nRECENT_EVENTS:\n" + gpuhelper::diagnostics::recentEvents()
+        );
         log::error(
             "[GPU Helper] CCTextureAtlas initialization failed even after reduced-capacity retries (requested {}).",
             capacity

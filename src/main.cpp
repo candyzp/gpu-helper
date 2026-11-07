@@ -14,6 +14,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <sys/sysctl.h>
+#include <sys/utsname.h>
 
 using namespace geode::prelude;
 
@@ -28,6 +30,8 @@ constexpr float kCameraSafetyMargin = 640.0f;
 
 
 std::uint64_t g_diagnosticSequence = 0;
+std::string g_lastDiagnosticEvent = "module_loaded_before_first_event";
+std::string g_previousSessionMarker = "not_read";
 auto const g_diagnosticSessionStart = std::chrono::steady_clock::now();
 void diagnosticEvent(std::string const& message) {
     ++g_diagnosticSequence;
@@ -37,6 +41,7 @@ void diagnosticEvent(std::string const& message) {
     std::ostringstream line;
     line << std::fixed << std::setprecision(3)
          << "+" << elapsed << "s #" << g_diagnosticSequence << " " << message;
+    g_lastDiagnosticEvent = line.str();
     log::info("[GPU Helper][DIAG] {}", line.str());
     gpuhelper::diagnostics::append(line.str());
 }
@@ -69,6 +74,115 @@ std::size_t g_cullCulledCount = 0;
 std::string g_cullStatus = "OFF";
 gpuhelper::metal::ViewRect g_previousView{};
 bool g_havePreviousView = false;
+
+
+std::string sysctlString(char const* name) {
+    std::size_t length = 0;
+    if (sysctlbyname(name, nullptr, &length, nullptr, 0) != 0 || length == 0) {
+        return "unavailable";
+    }
+    std::vector<char> buffer(length + 1, '\0');
+    if (sysctlbyname(name, buffer.data(), &length, nullptr, 0) != 0) {
+        return "unavailable";
+    }
+    return std::string(buffer.data());
+}
+
+std::string buildCrashSnapshot(std::string const& reason) {
+    std::ostringstream out;
+    struct utsname systemInfo {};
+    bool const haveUname = uname(&systemInfo) == 0;
+    auto const metal = gpuhelper::metal::getStats();
+    auto const atlas = gpuhelper::atlas::getFrameStats();
+
+    out << "GPU HELPER EXTENDED CRASH SNAPSHOT\n";
+    out << "FORMAT_VERSION=2\n";
+    out << "SNAPSHOT_REASON=" << reason << '\n';
+    out << "SNAPSHOT_UNIX_MS=" << gpuhelper::diagnostics::unixMilliseconds() << '\n';
+    out << "MOD_VERSION=" << Mod::get()->getVersion().toVString() << '\n';
+    out << "GEODE_VERSION=" << Loader::get()->getVersion().toVString() << '\n';
+    out << "GAME_VERSION=" << GEODE_GD_VERSION_STRING << '\n';
+    out << "PLATFORM=iOS arm64\n";
+    out << "DEVICE_MODEL=" << sysctlString("hw.machine") << '\n';
+    out << "IOS_PRODUCT_VERSION=" << sysctlString("kern.osproductversion") << '\n';
+    out << "KERNEL=" << (haveUname ? systemInfo.release : "unavailable") << '\n';
+    out << "KERNEL_MACHINE=" << (haveUname ? systemInfo.machine : "unavailable") << '\n';
+    out << "PREVIOUS_SESSION_MARKER=" << g_previousSessionMarker << '\n';
+    out << "SAVE_DIRECTORY=" << gpuhelper::diagnostics::saveDirectoryPath() << '\n';
+    out << "LAST_DIAGNOSTIC_EVENT=" << g_lastDiagnosticEvent << '\n';
+    out << "DIAGNOSTIC_SEQUENCE=" << g_diagnosticSequence << '\n';
+
+    out << "\n[SETTINGS]\n";
+    out << "graphics_mode=" << (g_lastGraphicsMode.empty() ? "not_read" : g_lastGraphicsMode) << '\n';
+    out << "gpu_decoration_culling="
+        << (Mod::get()->getSettingValue<bool>("gpu-decoration-culling") ? "on" : "off") << '\n';
+    out << "debug_overlay="
+        << (Mod::get()->getSettingValue<bool>("debug-overlay") ? "on" : "off") << '\n';
+
+    out << "\n[PLAYLAYER_AND_CULLING]\n";
+    out << "playlayer_pointer_present=" << (g_cullLayer ? "yes" : "no") << '\n';
+    out << "scan_complete=" << (g_scanComplete ? "yes" : "no") << '\n';
+    out << "cull_configured=" << (g_cullConfigured ? "yes" : "no") << '\n';
+    out << "cull_status=" << g_cullStatus << '\n';
+    out << "cull_generation=" << g_cullGeneration << '\n';
+    out << "driver_ticks=" << g_driverTicks << '\n';
+    out << "level_objects=" << g_levelObjectCount << '\n';
+    out << "decoration_type=" << g_decorationTypeCount << '\n';
+    out << "static_flag=" << g_staticFlagCount << '\n';
+    out << "ungrouped_static=" << g_ungroupedStaticCount << '\n';
+    out << "direct_bounds=" << g_directLayerBoundsCount << '\n';
+    out << "transformed_bounds=" << g_transformedBoundsCount << '\n';
+    out << "detached_bounds=" << g_detachedFallbackBoundsCount << '\n';
+    out << "rejected_bounds=" << g_rejectedBoundsCount << '\n';
+    out << "candidate_count=" << g_cullCandidateCount << '\n';
+    out << "culled_count=" << g_cullCulledCount << '\n';
+    out << "submitted_jobs=" << g_submittedJobs << '\n';
+    out << "pending_frame=" << g_cullPendingFrame << '\n';
+    out << "have_result_view=" << (g_haveCullResultView ? "yes" : "no") << '\n';
+    out << "configured_graphics_mode=" << g_configuredGraphicsMode << '\n';
+    if (g_havePreviousView) {
+        out << std::fixed << std::setprecision(3)
+            << "last_view=" << g_previousView.minX << ',' << g_previousView.minY << ','
+            << g_previousView.maxX << ',' << g_previousView.maxY << '\n';
+    } else {
+        out << "last_view=unavailable\n";
+    }
+
+    out << "\n[METAL]\n";
+    out << "metal_available=" << (g_metalAvailable ? "yes" : "no") << '\n';
+    out << "metal_device=" << g_metalDeviceName << '\n';
+    out << "completed_dispatches=" << metal.decorationCullDispatches << '\n';
+    out << "total_objects_processed=" << metal.totalDecorationObjectsProcessed << '\n';
+    out << "last_batch_size=" << metal.lastDecorationObjectCount << '\n';
+    out << "last_visible_count=" << metal.lastDecorationVisibleCount << '\n';
+    out << "dispatch_failures=" << metal.decorationCullFailures << '\n';
+    out << "gpu_timing_available=" << (metal.decorationCullTimingAvailable ? "yes" : "no") << '\n';
+    out << "last_gpu_ms=" << metal.lastDecorationCullGpuMilliseconds << '\n';
+    out << "last_submit_ms=" << metal.lastDecorationCullSubmitMilliseconds << '\n';
+    out << "last_metal_error=" << metal.lastDecorationCullError << '\n';
+
+    out << "\n[ATLAS_RENDERING]\n";
+    out << "intercepted_draws=" << atlas.interceptedDraws << '\n';
+    out << "actually_culled_quads=" << atlas.culledQuads << '\n';
+    out << "emitted_draw_runs=" << atlas.emittedRuns << '\n';
+    out << "invalidated_atlases=" << atlas.invalidatedAtlases << '\n';
+    out << "has_applied_culling=" << (atlas.hasAppliedCulling ? "yes" : "no") << '\n';
+
+    out << "\n[LOADED_MODS]\n";
+    for (auto* mod : Loader::get()->getAllMods()) {
+        if (!mod) continue;
+        out << (mod->isLoaded() ? "loaded " : "not_loaded ")
+            << mod->getID() << '@' << mod->getVersion().toVString() << '\n';
+    }
+
+    out << "\n[RECENT_DIAGNOSTIC_EVENTS]\n";
+    out << gpuhelper::diagnostics::recentEvents();
+    return out.str();
+}
+
+void persistCrashSnapshot(std::string const& reason) {
+    gpuhelper::diagnostics::writeCrashSnapshot(buildCrashSnapshot(reason));
+}
 
 bool finitePoint(CCPoint const& point) {
     return std::isfinite(point.x) && std::isfinite(point.y);
@@ -192,6 +306,7 @@ BoundsBuildPath buildObjectBounds(
 
 void configureDecorationCulling(PlayLayer* layer) {
     diagnosticEvent("LEVEL_SCAN_BEGIN");
+    persistCrashSnapshot("LEVEL_SCAN_BEGIN");
     clearCullingState("BUILDING");
     g_cullLayer = layer;
     g_scanComplete = false;
@@ -469,7 +584,7 @@ class GPUHelperDebugOverlay final : public CCNode {
         auto const stats = gpuhelper::metal::getStats();
         bool const enabled = Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
         std::ostringstream display;
-        display << "GPU HELPER v0.5.4 | ATLAS CULLING\n";
+        display << "GPU HELPER v0.5.5 | ATLAS CULLING\n";
         display << "HUD UPDATE: " << m_refreshCount << " | DRIVER TICKS: " << g_driverTicks << '\n';
         display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL: " << (g_metalAvailable ? "AVAILABLE" : "UNAVAILABLE")
@@ -523,7 +638,7 @@ class GPUHelperDebugOverlay final : public CCNode {
                 << (graphicsMode == "gpu-driven"
                     ? "CCTextureAtlas::drawNumberOfQuads"
                     : "DISABLED") << '\n';
-        display << "CRASH TRACE: PERSISTENT LOG ENABLED\n";
+        display << "CRASH DEBUGGER: PERSISTENT SNAPSHOTS ENABLED\n";
         display << "LOG EVENTS: " << g_diagnosticSequence;
         auto const text = display.str();
         m_shadowLabel->setString(text.c_str());
@@ -686,6 +801,7 @@ public:
                 event << " last_error=" << stats.lastDecorationCullError;
             }
             diagnosticEvent(event.str());
+            persistCrashSnapshot("GAMEPLAY_DRIVER_HEARTBEAT");
         }
     }
 };
@@ -693,7 +809,12 @@ public:
 } // namespace
 
 $on_mod(Loaded) {
-    diagnosticEvent("SESSION_START version=v0.5.4 mode=legacy_or_gpu_driven atlas_hook=drawNumberOfQuads texture_recovery=CCTextureAtlas::initWithTexture");
+    g_previousSessionMarker = gpuhelper::diagnostics::beginSession("v0.5.5");
+    diagnosticEvent("SESSION_START version=v0.5.5 diagnostics=extended snapshots=enabled");
+    if (g_previousSessionMarker.rfind("STATE=RUNNING", 0) == 0) {
+        diagnosticEvent("PREVIOUS_SESSION_UNCLEAN previous_state=RUNNING cause=crash_or_os_kill_or_force_close");
+    }
+    persistCrashSnapshot("SESSION_START");
     std::string error;
 
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);
@@ -726,6 +847,8 @@ $on_mod(Loaded) {
 
 class $modify(GPUHelperPlayLayer, PlayLayer) {
     void setupHasCompleted() {
+        diagnosticEvent("PLAYLAYER_SETUP_BEGIN");
+        persistCrashSnapshot("PLAYLAYER_SETUP_BEGIN");
         PlayLayer::setupHasCompleted();
         diagnosticEvent("PLAYLAYER_SETUP objects=" +
             std::to_string(this->m_objects ? this->m_objects->count() : 0));
@@ -777,10 +900,12 @@ class $modify(GPUHelperPlayLayer, PlayLayer) {
             clearCullingState("OFF", this);
             diagnosticEvent("CULLING_SETTING disabled_at_level_setup");
         }
+        persistCrashSnapshot("PLAYLAYER_SETUP_COMPLETE");
 
     }
     void onExit() {
         diagnosticEvent("PLAYLAYER_EXIT begin");
+        persistCrashSnapshot("PLAYLAYER_EXIT_BEGIN");
         clearCullingState("LEVEL EXIT");
         PlayLayer::onExit();
         diagnosticEvent("PLAYLAYER_EXIT complete");

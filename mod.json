@@ -5,9 +5,9 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.5.4",
+  "version": "v0.5.5",
   "developer": "candyzp",
-  "description": "iOS Metal visibility compute with opt-in atlas-quad draw-range culling, texture-atlas initialization recovery, and persistent diagnostics.",
+  "description": "iOS Metal visibility compute with opt-in atlas-quad culling, texture-atlas recovery, and extended persistent crash diagnostics.",
   "tags": [
     "performance",
     "enhancement",
