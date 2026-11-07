@@ -2,6 +2,7 @@
 
 #include <Geode/Geode.hpp>
 #include <Geode/modify/CCTextureAtlas.hpp>
+#include <Geode/modify/CCSpriteBatchNode.hpp>
 #include <OpenGLES/ES2/gl.h>
 
 #include <algorithm>
@@ -445,20 +446,6 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
         cocos2d::CCTextureAtlas::insertQuad(quad, index);
     }
 
-    void insertQuads(
-        cocos2d::ccV3F_C4B_T2F_Quad* quads,
-        unsigned int index,
-        unsigned int amount
-    ) {
-        gpuhelper::atlas::markStructureChanged(this);
-        cocos2d::CCTextureAtlas::insertQuads(quads, index, amount);
-    }
-
-    void insertQuadFromIndex(unsigned int fromIndex, unsigned int newIndex) {
-        gpuhelper::atlas::markStructureChanged(this);
-        cocos2d::CCTextureAtlas::insertQuadFromIndex(fromIndex, newIndex);
-    }
-
     void removeQuadAtIndex(unsigned int index) {
         gpuhelper::atlas::markStructureChanged(this);
         cocos2d::CCTextureAtlas::removeQuadAtIndex(index);
@@ -469,35 +456,6 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
         cocos2d::CCTextureAtlas::removeAllQuads();
     }
 
-    void removeQuadsAtIndex(unsigned int index, unsigned int amount) {
-        gpuhelper::atlas::markStructureChanged(this);
-        cocos2d::CCTextureAtlas::removeQuadsAtIndex(index, amount);
-    }
-
-    void moveQuadsFromIndex(unsigned int index, unsigned int newIndex) {
-        gpuhelper::atlas::markStructureChanged(this);
-        cocos2d::CCTextureAtlas::moveQuadsFromIndex(index, newIndex);
-    }
-
-    void moveQuadsFromIndex(
-        unsigned int oldIndex,
-        unsigned int amount,
-        unsigned int newIndex
-    ) {
-        gpuhelper::atlas::markStructureChanged(this);
-        cocos2d::CCTextureAtlas::moveQuadsFromIndex(oldIndex, amount, newIndex);
-    }
-
-    void fillWithEmptyQuadsFromIndex(unsigned int index, unsigned int amount) {
-        gpuhelper::atlas::markStructureChanged(this);
-        cocos2d::CCTextureAtlas::fillWithEmptyQuadsFromIndex(index, amount);
-    }
-
-    void increaseTotalQuadsWith(unsigned int amount) {
-        gpuhelper::atlas::markStructureChanged(this);
-        cocos2d::CCTextureAtlas::increaseTotalQuadsWith(amount);
-    }
-
     bool resizeCapacity(unsigned int capacity) {
         gpuhelper::atlas::markStructureChanged(this);
         return cocos2d::CCTextureAtlas::resizeCapacity(capacity);
@@ -506,5 +464,73 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
     void setQuads(cocos2d::ccV3F_C4B_T2F_Quad* quads) {
         gpuhelper::atlas::markStructureChanged(this);
         cocos2d::CCTextureAtlas::setQuads(quads);
+    }
+};
+
+
+class $modify(GPUHelperSpriteBatchNode, cocos2d::CCSpriteBatchNode) {
+    void addChild(cocos2d::CCNode* child) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::addChild(child);
+    }
+
+    void addChild(cocos2d::CCNode* child, int zOrder) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::addChild(child, zOrder);
+    }
+
+    void addChild(cocos2d::CCNode* child, int zOrder, int tag) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::addChild(child, zOrder, tag);
+    }
+
+    void removeChild(cocos2d::CCNode* child, bool cleanup) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::removeChild(child, cleanup);
+    }
+
+    void removeAllChildrenWithCleanup(bool cleanup) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::removeAllChildrenWithCleanup(cleanup);
+    }
+
+    void reorderChild(cocos2d::CCNode* child, int zOrder) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::reorderChild(child, zOrder);
+    }
+
+    void sortAllChildren() {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::sortAllChildren();
+    }
+
+    void appendChild(cocos2d::CCSprite* sprite) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::appendChild(sprite);
+    }
+
+    void removeSpriteFromAtlas(cocos2d::CCSprite* sprite) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::removeSpriteFromAtlas(sprite);
+    }
+
+    void reorderBatch(bool reorder) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::reorderBatch(reorder);
+    }
+
+    void manualSortAllChildren() {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::manualSortAllChildren();
+    }
+
+    void increaseAtlasCapacity() {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::increaseAtlasCapacity();
+    }
+
+    void increaseAtlasCapacity(unsigned int amount) {
+        gpuhelper::atlas::markStructureChanged(m_pobTextureAtlas);
+        cocos2d::CCSpriteBatchNode::increaseAtlasCapacity(amount);
     }
 };
