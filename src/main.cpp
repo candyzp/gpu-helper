@@ -12,7 +12,6 @@
 #include <limits>
 #include <sstream>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 using namespace geode::prelude;
@@ -47,12 +46,11 @@ std::size_t g_ungroupedStaticCount = 0;
 std::size_t g_rejectedBoundsCount = 0;
 std::uint64_t g_submittedJobs = 0;
 std::uint64_t g_lastLoggedCompletedJobs = 0;
+std::uint64_t g_lastLoggedFailures = 0;
 std::uint64_t g_driverTicks = 0;
 bool g_metalAvailable = false;
 std::string g_metalDeviceName = "Unknown";
 
-std::vector<GameObject*> g_cullObjects;
-std::unordered_set<GameObject*> g_culledObjects;
 std::uint64_t g_cullGeneration = 0;
 PlayLayer* g_cullLayer = nullptr;
 bool g_cullConfigured = false;
@@ -70,8 +68,6 @@ void clearCullingState(std::string const& status, PlayLayer* rememberedLayer = n
     ++g_cullGeneration;
     gpuhelper::metal::clearDecorationCulling(g_cullGeneration);
 
-    g_cullObjects.clear();
-    g_culledObjects.clear();
     g_cullConfigured = false;
     g_cullCandidateCount = 0;
     g_cullCulledCount = 0;
@@ -151,7 +147,6 @@ void configureDecorationCulling(PlayLayer* layer) {
     g_levelObjectCount = objectCount;
     bounds.reserve(std::min<std::size_t>(
         static_cast<std::size_t>(objectCount), kMaximumDecorationBatch));
-    g_cullObjects.reserve(bounds.capacity());
 
     for (unsigned int i = 0; i < objectCount; ++i) {
         auto* object = static_cast<GameObject*>(objects->objectAtIndex(i));
@@ -161,17 +156,15 @@ void configureDecorationCulling(PlayLayer* layer) {
         ++g_staticFlagCount;
         if (object->m_groupCount != 0) continue;
         ++g_ungroupedStaticCount;
-        if (g_cullObjects.size() >= kMaximumDecorationBatch) continue;
         gpuhelper::metal::ObjectBounds objectBounds;
         if (!buildObjectBounds(object, layer->m_objectLayer, objectBounds)) {
             ++g_rejectedBoundsCount;
             continue;
         }
-        g_cullObjects.push_back(object);
         bounds.push_back(objectBounds);
     }
 
-    g_cullCandidateCount = g_cullObjects.size();
+    g_cullCandidateCount = bounds.size();
     g_scanComplete = true;
     std::ostringstream scan;
     scan << "LEVEL_SCAN complete=1 objects=" << g_levelObjectCount
@@ -255,13 +248,10 @@ void tickDecorationCulling(PlayLayer* layer) {
             completedMask,
             completedGeneration)) {
         if (completedGeneration == g_cullGeneration &&
-            completedMask.size() == g_cullObjects.size()) {
-            g_culledObjects.clear();
+            completedMask.size() == g_cullCandidateCount) {
             g_cullCulledCount = 0;
-
-            for (std::size_t i = 0; i < completedMask.size(); ++i) {
-                if (completedMask[i] == 0) {
-                    g_culledObjects.insert(g_cullObjects[i]);
+            for (auto const visible : completedMask) {
+                if (visible == 0) {
                     ++g_cullCulledCount;
                 }
             }
@@ -284,7 +274,6 @@ void tickDecorationCulling(PlayLayer* layer) {
 
     gpuhelper::metal::ViewRect view;
     if (!currentViewRect(layer->m_objectLayer, view)) {
-        g_culledObjects.clear();
         g_cullCulledCount = 0;
         g_cullStatus = "VIEW UNAVAILABLE";
         return;
@@ -304,7 +293,6 @@ void tickDecorationCulling(PlayLayer* layer) {
                      (g_previousView.maxX - g_previousView.minX)) > 1024.0f ||
             std::abs((view.maxY - view.minY) -
                      (g_previousView.maxY - g_previousView.minY)) > 1024.0f) {
-            g_culledObjects.clear();
             g_cullCulledCount = 0;
         }
     }
@@ -322,6 +310,12 @@ void tickDecorationCulling(PlayLayer* layer) {
         clearCullingState("GPU DISPATCH FAILED", layer);
     }
     auto const stats = gpuhelper::metal::getStats();
+    if (stats.decorationCullFailures > g_lastLoggedFailures) {
+        g_lastLoggedFailures = stats.decorationCullFailures;
+        diagnosticEvent("METAL_ASYNC_FAILURE count=" +
+            std::to_string(stats.decorationCullFailures) +
+            " last_error=" + stats.lastDecorationCullError);
+    }
     if (stats.decorationCullDispatches > g_lastLoggedCompletedJobs) {
         g_lastLoggedCompletedJobs = stats.decorationCullDispatches;
         std::ostringstream event;
@@ -337,9 +331,6 @@ void tickDecorationCulling(PlayLayer* layer) {
     }
 }
 
-bool isDecorationCulled(GameObject* object) {
-    return object && g_culledObjects.find(object) != g_culledObjects.end();
-}
 
 class GPUHelperDebugOverlay final : public CCNode {
     CCLabelBMFont* m_label = nullptr;
@@ -367,6 +358,11 @@ class GPUHelperDebugOverlay final : public CCNode {
         display << "GPU STATE: " << (enabled ? g_cullStatus : "DISABLED IN SETTINGS") << '\n';
         display << "GPU JOBS: " << stats.decorationCullDispatches
                 << " COMPLETE / " << g_submittedJobs << " SUBMITTED\n";
+        display << "GPU FAILURES: " << stats.decorationCullFailures << '\n';
+        if (!stats.lastDecorationCullError.empty()) {
+            display << "LAST ERROR: "
+                    << stats.lastDecorationCullError.substr(0, 64) << '\n';
+        }
         display << "PROCESSED: " << stats.totalDecorationObjectsProcessed << " TOTAL OBJECTS\n";
         display << "VISIBILITY: " << (g_cullCandidateCount >= g_cullCulledCount
                     ? g_cullCandidateCount - g_cullCulledCount : 0)
@@ -457,35 +453,26 @@ public:
     void update(float dt) override {
         CCNode::update(dt);
         ++g_driverTicks;
-        auto* layer = PlayLayer::get();
-        if (!layer) {
-            return;
-        }
 
+        auto* layer = PlayLayer::get();
         bool const enabled =
             Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
 
-        if (!enabled) {
-            if (g_cullLayer || g_cullConfigured ||
-                g_cullStatus != "OFF") {
+        if (layer && !enabled) {
+            if (g_cullLayer || g_cullConfigured || g_cullStatus != "OFF") {
                 clearCullingState("OFF");
+                diagnosticEvent("CULLING_SETTING disabled");
             }
-            return;
         }
-
-        // A level can be remembered while culling is disabled. If the setting
-        // is enabled later in that same level, the layer pointer alone must not
-        // suppress initialization: "OFF" with no configured batch means this
-        // level has not yet been scanned for the current enabled state.
-        bool const needsConfiguration =
-            g_cullLayer != layer ||
-            (!g_cullConfigured && g_cullStatus == "OFF");
-
-        if (needsConfiguration) {
-            configureDecorationCulling(layer);
+        else if (layer && enabled) {
+            bool const needsConfiguration =
+                g_cullLayer != layer ||
+                (!g_cullConfigured && g_cullStatus == "OFF");
+            if (needsConfiguration) {
+                configureDecorationCulling(layer);
+            }
+            tickDecorationCulling(layer);
         }
-
-        tickDecorationCulling(layer);
 
         m_heartbeatElapsed += dt;
         if (m_heartbeatElapsed >= 2.0f) {
@@ -493,11 +480,14 @@ public:
             auto const stats = gpuhelper::metal::getStats();
             std::ostringstream event;
             event << "DRIVER_HEARTBEAT ticks=" << g_driverTicks
+                  << " playlayer=" << (layer ? "present" : "absent")
+                  << " setting=" << (enabled ? "on" : "off")
                   << " configured=" << (g_cullConfigured ? "yes" : "no")
                   << " status=" << g_cullStatus
                   << " eligible=" << g_cullCandidateCount
                   << " submitted=" << g_submittedJobs
-                  << " completed=" << stats.decorationCullDispatches;
+                  << " completed=" << stats.decorationCullDispatches
+                  << " failures=" << stats.decorationCullFailures;
             diagnosticEvent(event.str());
         }
     }
