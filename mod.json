@@ -5,9 +5,9 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.3.7",
+  "version": "v0.3.8",
   "developer": "candyzp",
-  "description": "Experimental iOS Metal compute mod with larger live gameplay diagnostics with a visible refresh counter and GPU-assisted static decoration visibility culling, including reliable runtime enable/disable transitions.",
+  "description": "Experimental iOS Metal visibility-measurement mod with persistent crash breadcrumbs, a large live diagnostic HUD, and no GameObject render hook.",
   "tags": [
     "performance",
     "enhancement",
@@ -20,13 +20,13 @@
     "debug-overlay": {
       "type": "bool",
       "name": "Show in-game GPU diagnostics overlay",
-      "description": "Show larger live GPU diagnostics with a changing HUD update counter including device, culling state, eligible objects, completed jobs, visible/culled counts, and timing. Larger text-only HUD with per-level batch state, actual completed Metal dispatches, visible/culled counts, processed-object totals, GPU time, CPU submit time, and fail-open state. No background panel.",
+      "description": "Show the large live diagnostic HUD with a 4 Hz changing update counter, per-level scan breakdown, driver heartbeats, Metal submit/completion counts, visibility results, GPU timing, and persistent crash-trace status.",
       "default": true
     },
     "gpu-decoration-culling": {
       "type": "bool",
-      "name": "GPU-assisted static decoration culling",
-      "description": "Use Metal to test ungrouped static decoration bounds against the camera. The diagnostics show whether the GPU returned real visibility results. Cocos still draws visible objects; gameplay updates, triggers, collisions, and player physics remain on the normal game path. Experimental and fail-open if GPU work fails.",
+      "name": "GPU static-decoration visibility measurement (safe mode)",
+      "description": "Use Metal to measure ungrouped static decoration bounds against the camera. SAFE MODE ONLY: results are diagnostic and are not applied to rendering. No GameObject::visit override or render skipping is installed. This build prioritizes crash isolation and persistent diagnostics over FPS gains.",
       "default": true
     }
   }
