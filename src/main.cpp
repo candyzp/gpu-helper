@@ -2,6 +2,7 @@
 #include <Geode/modify/PlayLayer.hpp>
 
 #include "gpu/MetalCompute.hpp"
+#include "gpu/AtlasCulling.hpp"
 #include "Diagnostics.hpp"
 
 #include <algorithm>
@@ -22,7 +23,7 @@ constexpr int kDebugOverlayTag = 0x475055;
 constexpr int kCullingDriverTag = 0x475043;
 constexpr int kInteropProbeTag = 0x475049;
 constexpr std::size_t kMinimumDecorationBatch = 96;
-constexpr std::size_t kMaximumDecorationBatch = 131072;
+constexpr std::size_t kMaximumDecorationBatch = 524288;
 constexpr float kCameraSafetyMargin = 640.0f;
 
 
@@ -56,6 +57,11 @@ std::string g_metalDeviceName = "Unknown";
 std::string g_lastGraphicsMode;
 
 std::uint64_t g_cullGeneration = 0;
+std::uint64_t g_cullPendingFrame = 0;
+gpuhelper::metal::ViewRect g_cullPendingView{};
+gpuhelper::metal::ViewRect g_cullResultView{};
+bool g_haveCullResultView = false;
+std::string g_configuredGraphicsMode;
 PlayLayer* g_cullLayer = nullptr;
 bool g_cullConfigured = false;
 std::size_t g_cullCandidateCount = 0;
@@ -70,7 +76,7 @@ bool finitePoint(CCPoint const& point) {
 
 std::string currentGraphicsMode() {
     auto mode = Mod::get()->getSettingValue<std::string>("graphics-mode");
-    if (mode != "hybrid") {
+    if (mode != "gpu-driven") {
         mode = "legacy";
     }
     if (mode != g_lastGraphicsMode) {
@@ -82,13 +88,21 @@ std::string currentGraphicsMode() {
     return mode;
 }
 
+bool gpuDrivenModeEnabled() {
+    return currentGraphicsMode() == "gpu-driven";
+}
+
 bool hybridModeEnabled() {
-    return currentGraphicsMode() == "hybrid";
+    return false;
 }
 
 void clearCullingState(std::string const& status, PlayLayer* rememberedLayer = nullptr) {
     ++g_cullGeneration;
     gpuhelper::metal::clearDecorationCulling(g_cullGeneration);
+    gpuhelper::atlas::clear(g_cullGeneration);
+    g_cullPendingFrame = 0;
+    g_haveCullResultView = false;
+    g_configuredGraphicsMode.clear();
 
     g_cullConfigured = false;
     g_cullCandidateCount = 0;
@@ -200,42 +214,64 @@ void configureDecorationCulling(PlayLayer* layer) {
     auto* objects = layer->m_objects;
     auto const objectCount = objects->count();
     g_levelObjectCount = objectCount;
-    bounds.reserve(std::min<std::size_t>(
-        static_cast<std::size_t>(objectCount), kMaximumDecorationBatch));
+    g_configuredGraphicsMode = currentGraphicsMode();
 
-    for (unsigned int i = 0; i < objectCount; ++i) {
-        auto* object = static_cast<GameObject*>(objects->objectAtIndex(i));
-        if (!object || object->m_objectType != GameObjectType::Decoration) continue;
-        ++g_decorationTypeCount;
-        if (!object->m_isDecoration2) continue;
-        ++g_staticFlagCount;
-        if (object->m_groupCount != 0) continue;
-        ++g_ungroupedStaticCount;
-        gpuhelper::metal::ObjectBounds objectBounds;
-        auto const boundsPath = buildObjectBounds(object, layer->m_objectLayer, objectBounds);
-        if (boundsPath == BoundsBuildPath::Invalid) {
-            ++g_rejectedBoundsCount;
-            continue;
+    if (gpuDrivenModeEnabled()) {
+        std::string atlasError;
+        if (!gpuhelper::atlas::buildLevelBounds(layer, bounds, atlasError)) {
+            g_scanComplete = true;
+            g_cullStatus = "ATLAS SCAN FAILED";
+            diagnosticEvent("ATLAS_SCAN_FAILED reason=" + atlasError);
+            return;
         }
-        if (boundsPath == BoundsBuildPath::DirectObjectLayer) ++g_directLayerBoundsCount;
-        else if (boundsPath == BoundsBuildPath::TransformedParent) ++g_transformedBoundsCount;
-        else if (boundsPath == BoundsBuildPath::DetachedFallback) ++g_detachedFallbackBoundsCount;
-        bounds.push_back(objectBounds);
-    }
 
-    g_cullCandidateCount = bounds.size();
-    g_scanComplete = true;
-    std::ostringstream scan;
-    scan << "LEVEL_SCAN complete=1 objects=" << g_levelObjectCount
-         << " decoration_type=" << g_decorationTypeCount
-         << " static_flag=" << g_staticFlagCount
-         << " ungrouped_static=" << g_ungroupedStaticCount
-         << " direct_layer_bounds=" << g_directLayerBoundsCount
-         << " transformed_bounds=" << g_transformedBoundsCount
-         << " detached_fallback_bounds=" << g_detachedFallbackBoundsCount
-         << " valid_bounds=" << g_cullCandidateCount
-         << " rejected_bounds=" << g_rejectedBoundsCount;
-    diagnosticEvent(scan.str());
+        g_cullCandidateCount = bounds.size();
+        g_scanComplete = true;
+        diagnosticEvent(
+            "ATLAS_SCAN complete=1 level_objects=" +
+            std::to_string(g_levelObjectCount) +
+            " atlas_quads=" + std::to_string(g_cullCandidateCount) +
+            " source=CCTextureAtlas::getQuads"
+        );
+    }
+    else {
+        bounds.reserve(std::min<std::size_t>(
+            static_cast<std::size_t>(objectCount), kMaximumDecorationBatch));
+
+        for (unsigned int i = 0; i < objectCount; ++i) {
+            auto* object = static_cast<GameObject*>(objects->objectAtIndex(i));
+            if (!object || object->m_objectType != GameObjectType::Decoration) continue;
+            ++g_decorationTypeCount;
+            if (!object->m_isDecoration2) continue;
+            ++g_staticFlagCount;
+            if (object->m_groupCount != 0) continue;
+            ++g_ungroupedStaticCount;
+            gpuhelper::metal::ObjectBounds objectBounds;
+            auto const boundsPath = buildObjectBounds(object, layer->m_objectLayer, objectBounds);
+            if (boundsPath == BoundsBuildPath::Invalid) {
+                ++g_rejectedBoundsCount;
+                continue;
+            }
+            if (boundsPath == BoundsBuildPath::DirectObjectLayer) ++g_directLayerBoundsCount;
+            else if (boundsPath == BoundsBuildPath::TransformedParent) ++g_transformedBoundsCount;
+            else if (boundsPath == BoundsBuildPath::DetachedFallback) ++g_detachedFallbackBoundsCount;
+            bounds.push_back(objectBounds);
+        }
+
+        g_cullCandidateCount = bounds.size();
+        g_scanComplete = true;
+        std::ostringstream scan;
+        scan << "LEVEL_SCAN complete=1 objects=" << g_levelObjectCount
+             << " decoration_type=" << g_decorationTypeCount
+             << " static_flag=" << g_staticFlagCount
+             << " ungrouped_static=" << g_ungroupedStaticCount
+             << " direct_layer_bounds=" << g_directLayerBoundsCount
+             << " transformed_bounds=" << g_transformedBoundsCount
+             << " detached_fallback_bounds=" << g_detachedFallbackBoundsCount
+             << " valid_bounds=" << g_cullCandidateCount
+             << " rejected_bounds=" << g_rejectedBoundsCount;
+        diagnosticEvent(scan.str());
+    }
 
     if (g_cullCandidateCount < kMinimumDecorationBatch) {
         g_cullStatus = "NOT ENOUGH STATIC DECOR";
@@ -253,7 +289,11 @@ void configureDecorationCulling(PlayLayer* layer) {
     }
     g_cullConfigured = true;
     g_cullStatus = "WAITING FOR GPU RESULT";
-    diagnosticEvent("METAL_BATCH_CONFIGURED candidates=" + std::to_string(g_cullCandidateCount));
+    diagnosticEvent(
+        std::string("METAL_BATCH_CONFIGURED source=") +
+        (gpuDrivenModeEnabled() ? "atlas_quads" : "legacy_decoration_bounds") +
+        " candidates=" + std::to_string(g_cullCandidateCount)
+    );
 }
 
 
@@ -300,6 +340,7 @@ bool currentViewRect(
 }
 
 void tickDecorationCulling(PlayLayer* layer) {
+    gpuhelper::atlas::setCurrentFrame(g_driverTicks);
     if (!layer || !g_cullConfigured || layer != g_cullLayer) {
         return;
     }
@@ -318,12 +359,22 @@ void tickDecorationCulling(PlayLayer* layer) {
                 }
             }
 
-            g_cullStatus = "MEASURED - RENDERING UNCHANGED";
+            if (gpuDrivenModeEnabled()) {
+                gpuhelper::atlas::acceptVisibilityMask(
+                    completedMask, completedGeneration, g_cullPendingFrame
+                );
+                g_cullStatus = "GPU MASK READY";
+                g_cullResultView = g_cullPendingView;
+                g_haveCullResultView = true;
+            }
+            else {
+                g_cullStatus = "MEASURED - RENDERING UNCHANGED";
+            }
             diagnosticEvent(
                 "METAL_RESULT generation=" + std::to_string(completedGeneration) +
                 " visible=" + std::to_string(g_cullCandidateCount - g_cullCulledCount) +
-                " would_cull=" + std::to_string(g_cullCulledCount) +
-                " applied_to_renderer=0"
+                " outside_view=" + std::to_string(g_cullCulledCount) +
+                " consumer=" + (gpuDrivenModeEnabled() ? "atlas_draw_runs" : "diagnostics_only")
             );
         }
         else {
@@ -338,7 +389,30 @@ void tickDecorationCulling(PlayLayer* layer) {
     if (!currentViewRect(layer->m_objectLayer, view)) {
         g_cullCulledCount = 0;
         g_cullStatus = "VIEW UNAVAILABLE";
+        gpuhelper::atlas::invalidateResults();
+        g_haveCullResultView = false;
         return;
+    }
+
+    if (gpuDrivenModeEnabled() && g_haveCullResultView) {
+        // The GPU tested the previous frame's viewport expanded by the safety
+        // margin. Reuse the mask only while the current real viewport remains
+        // fully inside the exact region that was tested.
+        gpuhelper::metal::ViewRect const currentViewport {
+            view.minX + kCameraSafetyMargin,
+            view.minY + kCameraSafetyMargin,
+            view.maxX - kCameraSafetyMargin,
+            view.maxY - kCameraSafetyMargin
+        };
+        bool const contained =
+            currentViewport.minX >= g_cullResultView.minX &&
+            currentViewport.minY >= g_cullResultView.minY &&
+            currentViewport.maxX <= g_cullResultView.maxX &&
+            currentViewport.maxY <= g_cullResultView.maxY;
+        if (!contained) {
+            gpuhelper::atlas::invalidateResults();
+            g_haveCullResultView = false;
+        }
     }
 
     if (g_havePreviousView) {
@@ -356,6 +430,8 @@ void tickDecorationCulling(PlayLayer* layer) {
             std::abs((view.maxY - view.minY) -
                      (g_previousView.maxY - g_previousView.minY)) > 1024.0f) {
             g_cullCulledCount = 0;
+            gpuhelper::atlas::invalidateResults();
+            g_haveCullResultView = false;
         }
     }
 
@@ -365,6 +441,8 @@ void tickDecorationCulling(PlayLayer* layer) {
     std::string error;
     if (gpuhelper::metal::submitDecorationCulling(view, g_cullGeneration, error)) {
         ++g_submittedJobs;
+        g_cullPendingFrame = g_driverTicks;
+        g_cullPendingView = view;
     }
     else if (!error.empty()) {
         log::warn("[GPU Helper] Metal decoration culling failed open: {}", error);
@@ -391,7 +469,7 @@ class GPUHelperDebugOverlay final : public CCNode {
         auto const stats = gpuhelper::metal::getStats();
         bool const enabled = Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
         std::ostringstream display;
-        display << "GPU HELPER v0.4.2 | SELECTABLE GRAPHICS PATH\n";
+        display << "GPU HELPER v0.5.0 | ATLAS CULLING\n";
         display << "HUD UPDATE: " << m_refreshCount << " | DRIVER TICKS: " << g_driverTicks << '\n';
         display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL: " << (g_metalAvailable ? "AVAILABLE" : "UNAVAILABLE")
@@ -425,21 +503,26 @@ class GPUHelperDebugOverlay final : public CCNode {
                     << "ms GPU | " << stats.lastDecorationCullSubmitMilliseconds << "ms SUBMIT\n";
         } else display << "TIMING: WAITING FOR COMPLETED GPU JOB\n";
         auto const graphicsMode = currentGraphicsMode();
+        auto const atlasStats = gpuhelper::atlas::getFrameStats();
         display << "GRAPHICS PATH: "
-                << (graphicsMode == "hybrid" ? "HYBRID (METAL + OPENGL ES)" : "LEGACY (METAL COMPUTE)") << '\n';
-        auto const interop = gpuhelper::interop::getProbeStatus();
-        display << "METAL / OPENGL ES: "
-                << (graphicsMode != "hybrid" ? "INACTIVE - LEGACY MODE" :
-                    (interop.ready ? "SHARED TEXTURE READY" :
-                     (interop.attempted ? "PROBE FAILED" : "WAITING FOR GL CONTEXT"))) << '\n';
-        if (graphicsMode == "hybrid" && interop.ready) {
-            display << "SHARED GL TEXTURE: " << interop.glTextureName << '\n';
+                << (graphicsMode == "gpu-driven"
+                    ? "GPU-DRIVEN ATLAS CULLING"
+                    : "LEGACY METAL MEASUREMENT") << '\n';
+        if (graphicsMode == "gpu-driven") {
+            display << "ATLAS DRAW HOOK: "
+                    << (atlasStats.hasAppliedCulling ? "ACTIVE" : "WAITING FOR VALID GPU MASK") << '\n';
+            display << "ACTUALLY SKIPPED: " << atlasStats.culledQuads
+                    << " QUADS | DRAW RUNS: " << atlasStats.emittedRuns << '\n';
+            display << "ATLAS SAFETY: DYNAMIC VISIBLE | STRUCTURE CHANGES FAIL OPEN\n";
+            display << "METAL MASK -> CPU RUN LIST -> OPENGL ES DRAWS\n";
         }
-        else if (graphicsMode == "hybrid" && interop.attempted && !interop.error.empty()) {
-            display << "INTEROP ERROR: " << interop.error.substr(0, 58) << '\n';
+        else {
+            display << "RENDERING: UNCHANGED (LEGACY MEASUREMENT ONLY)\n";
         }
-        display << "HYBRID STAGE: SHARED-TEXTURE PROBE ONLY - DRAWING UNCHANGED\n";
-        display << "RENDER HOOK: REMOVED - GAME DRAWING UNCHANGED\n";
+        display << "RENDER HOOK: "
+                << (graphicsMode == "gpu-driven"
+                    ? "CCTextureAtlas::drawNumberOfQuads"
+                    : "DISABLED") << '\n';
         display << "CRASH TRACE: PERSISTENT LOG ENABLED\n";
         display << "LOG EVENTS: " << g_diagnosticSequence;
         auto const text = display.str();
@@ -558,6 +641,7 @@ public:
     void update(float dt) override {
         CCNode::update(dt);
         ++g_driverTicks;
+        gpuhelper::atlas::setCurrentFrame(g_driverTicks);
 
         auto* layer = PlayLayer::get();
         bool const enabled =
@@ -570,8 +654,10 @@ public:
             }
         }
         else if (layer && enabled) {
+            std::string const graphicsMode = currentGraphicsMode();
             bool const needsConfiguration =
                 g_cullLayer != layer ||
+                g_configuredGraphicsMode != graphicsMode ||
                 (!g_cullConfigured && g_cullStatus == "OFF");
             if (needsConfiguration) {
                 configureDecorationCulling(layer);
@@ -607,7 +693,7 @@ public:
 } // namespace
 
 $on_mod(Loaded) {
-    diagnosticEvent("SESSION_START version=v0.4.2 mode=selectable renderer_hook=removed");
+    diagnosticEvent("SESSION_START version=v0.5.0 mode=legacy_or_gpu_driven atlas_hook=CCTextureAtlas::drawNumberOfQuads");
     std::string error;
 
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);

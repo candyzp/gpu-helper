@@ -5,9 +5,9 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.4.2",
+  "version": "v0.5.0",
   "developer": "candyzp",
-  "description": "Experimental iOS Metal/OpenGL ES hybrid-rendering research with an opt-in shared-texture interop probe, Metal visibility measurements, and persistent diagnostics.",
+  "description": "iOS Metal visibility compute with opt-in atlas-quad draw-range culling, a legacy measurement fallback, and persistent diagnostics.",
   "tags": [
     "performance",
     "enhancement",
@@ -26,14 +26,14 @@
     "graphics-mode": {
       "type": "string",
       "name": "GPU Helper graphics path",
-      "description": "Switch between the legacy Metal visibility-measurement path and the experimental hybrid Metal + OpenGL ES shared-texture path. Hybrid mode currently runs the legacy visibility measurements plus the shared-texture probe; it does not yet feed culling results into Geometry Dash's renderer. Default is legacy for stability.",
+      "description": "Legacy keeps the previous diagnostic-only Metal visibility measurement. GPU-driven classifies actual CCTextureAtlas quad bounds with Metal and consumes the resulting visibility mask at CCTextureAtlas::drawNumberOfQuads by issuing ordered visible ranges. Dynamic quads remain visible; atlas structural changes, transform changes, and stale view results fail open. Default is legacy.",
       "default": "legacy",
-      "one-of": ["legacy", "hybrid"]
+      "one-of": ["legacy", "gpu-driven"]
     },
     "gpu-decoration-culling": {
       "type": "bool",
       "name": "GPU static-decoration visibility measurement (safe mode)",
-      "description": "Use Metal to measure ungrouped static decoration bounds against the camera. SAFE MODE ONLY: results are diagnostic and are not applied to rendering. No GameObject::visit override or render skipping is installed. This build prioritizes crash isolation and persistent diagnostics over FPS gains.",
+      "description": "Enable Metal visibility processing. In Legacy mode, only old decoration bounds are measured. In GPU-driven mode, cached atlas quad bounds are tested and valid masks split the real atlas draw into contiguous visible runs. Moving quads stay visible and unsafe atlas states fall back to the normal draw.",
       "default": true
     }
   }

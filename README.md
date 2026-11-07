@@ -1,15 +1,17 @@
 # GPU Helper
 
-## v0.4.2 — Selectable legacy and hybrid graphics paths
+## v0.5.0 — GPU-assisted atlas draw-range culling
 
-The Geode settings page now has one selector: **GPU Helper graphics path**.
+The Geode setting **GPU Helper graphics path** now offers two paths:
 
-- **legacy** — the earlier Metal visibility-measurement path, with the OpenGL ES interop probe inactive.
-- **hybrid** — the same visibility measurements plus the opt-in Core Video shared-texture path that creates a Metal texture and an OpenGL ES texture over the same pixel buffer.
+- **legacy** — the previous Metal decoration-visibility measurement. It does not alter rendering.
+- **gpu-driven** — builds conservative bounds from the actual quads stored in each CCTextureAtlas, runs the existing Metal bounds kernel, and consumes a completed mask in the CCTextureAtlas::drawNumberOfQuads(count, start) hook. The hook emits contiguous visible atlas ranges in ascending atlas order.
 
-The default is **legacy**. You can switch modes while playing; the setting is read live by the HUD and the Cocos draw callback. Switching to hybrid runs the interop probe once when Geometry Dash's EAGL context is current. Switching back to legacy marks the probe inactive and keeps the legacy visibility path.
+The atlas path covers base, glow, and detail sprites because each rendered sprite quad is considered independently. A quad updated after the level scan is permanently treated as dynamic and remains visible. Atlas insert/remove/reorder/capacity changes invalidate that atlas for the rest of the level. Batch-node transform changes, missing/stale masks, invalid indices, and Metal failures all use the original full draw. A delayed mask is reused only while the current viewport remains inside the exact expanded region tested by Metal.
 
-**Important:** hybrid mode currently verifies shared-texture creation only. It does not yet write visibility results into the shared texture, pass the results to Cocos/OpenGL ES drawing, or skip rendering. Both modes leave game rendering, physics, collisions, and triggers unchanged. The next step is to validate a Metal write followed by an OpenGL ES read before connecting any of this to the renderer.
+OpenGL ES still submits the draw calls on the CPU: ES2 has no indirect-draw command path for Metal to issue. Metal performs the visibility calculation; the CPU reads the shared-storage result mask and converts it into ordered draw ranges. This is actual atlas draw culling, not a claim that Metal directly submits GL commands.
+
+The legacy path remains the default. This first GPU-driven implementation is experimental and needs on-device correctness/performance testing before it can be considered a stable optimization. No player physics, collisions, trigger ordering, or authoritative gameplay state are moved to the GPU.
 
 ## v0.3.9 — Safe diagnostic mode
 

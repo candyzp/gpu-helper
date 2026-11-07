@@ -184,14 +184,14 @@ bool buildLevelBounds(
 
     std::size_t totalQuads = 0;
     for (unsigned int batchIndex = 0; batchIndex < batchNodeCount; ++batchIndex) {
-        auto* batch = typeinfo_cast<cocos2d::CCSpriteBatchNode*>(
+        auto* batch = static_cast<cocos2d::CCSpriteBatchNode*>(
             batchNodes->objectAtIndex(batchIndex)
         );
         if (!batch) {
             continue;
         }
 
-        auto* atlas = batch->getTextureAtlas();
+        auto* atlas = batch->m_pobTextureAtlas;
         if (!atlas || !atlas->getQuads()) {
             continue;
         }
@@ -454,9 +454,19 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
         cocos2d::CCTextureAtlas::insertQuads(quads, index, amount);
     }
 
+    void insertQuadFromIndex(unsigned int fromIndex, unsigned int newIndex) {
+        gpuhelper::atlas::markStructureChanged(this);
+        cocos2d::CCTextureAtlas::insertQuadFromIndex(fromIndex, newIndex);
+    }
+
     void removeQuadAtIndex(unsigned int index) {
         gpuhelper::atlas::markStructureChanged(this);
         cocos2d::CCTextureAtlas::removeQuadAtIndex(index);
+    }
+
+    void removeAllQuads() {
+        gpuhelper::atlas::markStructureChanged(this);
+        cocos2d::CCTextureAtlas::removeAllQuads();
     }
 
     void removeQuadsAtIndex(unsigned int index, unsigned int amount) {
@@ -464,9 +474,9 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
         cocos2d::CCTextureAtlas::removeQuadsAtIndex(index, amount);
     }
 
-    void moveQuadsFromIndex(unsigned int oldIndex, unsigned int amount) {
+    void moveQuadsFromIndex(unsigned int index, unsigned int newIndex) {
         gpuhelper::atlas::markStructureChanged(this);
-        cocos2d::CCTextureAtlas::moveQuadsFromIndex(oldIndex, amount);
+        cocos2d::CCTextureAtlas::moveQuadsFromIndex(index, newIndex);
     }
 
     void moveQuadsFromIndex(
@@ -476,6 +486,16 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
     ) {
         gpuhelper::atlas::markStructureChanged(this);
         cocos2d::CCTextureAtlas::moveQuadsFromIndex(oldIndex, amount, newIndex);
+    }
+
+    void fillWithEmptyQuadsFromIndex(unsigned int index, unsigned int amount) {
+        gpuhelper::atlas::markStructureChanged(this);
+        cocos2d::CCTextureAtlas::fillWithEmptyQuadsFromIndex(index, amount);
+    }
+
+    void increaseTotalQuadsWith(unsigned int amount) {
+        gpuhelper::atlas::markStructureChanged(this);
+        cocos2d::CCTextureAtlas::increaseTotalQuadsWith(amount);
     }
 
     bool resizeCapacity(unsigned int capacity) {
