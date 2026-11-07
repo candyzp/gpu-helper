@@ -5,7 +5,7 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.4.1",
+  "version": "v0.4.2",
   "developer": "candyzp",
   "description": "Experimental iOS Metal/OpenGL ES hybrid-rendering research with an opt-in shared-texture interop probe, Metal visibility measurements, and persistent diagnostics.",
   "tags": [
@@ -23,11 +23,12 @@
       "description": "Show the large live diagnostic HUD with a 4 Hz changing update counter, per-level scan breakdown, driver heartbeats, Metal submit/completion counts, visibility results, GPU timing, and persistent crash-trace status.",
       "default": true
     },
-    "metal-opengl-interop-probe": {
-      "type": "bool",
-      "name": "Experimental Metal / OpenGL ES shared-texture probe",
-      "description": "Opt-in test created during the active Cocos OpenGL ES draw callback. Creates a Core Video pixel buffer with Metal and OpenGL ES texture views. Validates shared texture creation only; it does not draw into the game or change rendering.",
-      "default": false
+    "graphics-mode": {
+      "type": "string",
+      "name": "GPU Helper graphics path",
+      "description": "Switch between the legacy Metal visibility-measurement path and the experimental hybrid Metal + OpenGL ES shared-texture path. Hybrid mode currently runs the legacy visibility measurements plus the shared-texture probe; it does not yet feed culling results into Geometry Dash's renderer. Default is legacy for stability.",
+      "default": "legacy",
+      "one-of": ["legacy", "hybrid"]
     },
     "gpu-decoration-culling": {
       "type": "bool",

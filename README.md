@@ -1,12 +1,15 @@
 # GPU Helper
 
-## v0.4.1 — Hybrid interop foundation probe
+## v0.4.2 — Selectable legacy and hybrid graphics paths
 
-The OpenGL ES-specific interop code is compiled only for iOS, keeping the existing Metal regression target buildable on macOS.
+The Geode settings page now has one selector: **GPU Helper graphics path**.
 
-This build adds an opt-in shared-texture probe for the existing OpenGL ES renderer and the Metal compute backend. When enabled, a small Core Video pixel buffer is created with both Metal and OpenGL ES compatibility. The game's current EAGLContext is obtained from a Cocos draw callback, and Core Video creates a Metal texture view and an OpenGL ES texture view from the same backing. The probe validates that both texture objects can be created and that the GL texture name is valid in the game context.
+- **legacy** — the earlier Metal visibility-measurement path, with the OpenGL ES interop probe inactive.
+- **hybrid** — the same visibility measurements plus the opt-in Core Video shared-texture path that creates a Metal texture and an OpenGL ES texture over the same pixel buffer.
 
-This is deliberately not a renderer integration yet: it does not sample the Metal texture in a Cocos shader, does not pass culling results to the game renderer, does not replace drawing, and does not affect gameplay. Enable **Experimental Metal / OpenGL ES shared-texture probe** to run it.
+The default is **legacy**. You can switch modes while playing; the setting is read live by the HUD and the Cocos draw callback. Switching to hybrid runs the interop probe once when Geometry Dash's EAGL context is current. Switching back to legacy marks the probe inactive and keeps the legacy visibility path.
+
+**Important:** hybrid mode currently verifies shared-texture creation only. It does not yet write visibility results into the shared texture, pass the results to Cocos/OpenGL ES drawing, or skip rendering. Both modes leave game rendering, physics, collisions, and triggers unchanged. The next step is to validate a Metal write followed by an OpenGL ES read before connecting any of this to the renderer.
 
 ## v0.3.9 — Safe diagnostic mode
 

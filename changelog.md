@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.2
+- Replace the standalone hybrid-probe boolean with a single-choice graphics path selector: legacy or hybrid.
+- Keep legacy Metal visibility measurement as the default and preserve its behavior.
+- Hybrid mode runs the same visibility measurements and activates the shared Metal/OpenGL ES texture probe from the current Cocos draw callback.
+- Add live HUD mode reporting and persistent mode-switch breadcrumbs.
+- Clarify that hybrid mode is currently an interoperability foundation probe, not yet GPU-driven rendering or actual culling.
+
+
 ## v0.4.1
 - Restrict the Core Video OpenGL ES interop headers and implementation to iOS builds, preserving the macOS Metal regression test target.
 - Keep the v0.4.0 opt-in shared-texture probe behavior unchanged.

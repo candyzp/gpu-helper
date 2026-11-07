@@ -53,6 +53,7 @@ std::uint64_t g_lastLoggedFailures = 0;
 std::uint64_t g_driverTicks = 0;
 bool g_metalAvailable = false;
 std::string g_metalDeviceName = "Unknown";
+std::string g_lastGraphicsMode;
 
 std::uint64_t g_cullGeneration = 0;
 PlayLayer* g_cullLayer = nullptr;
@@ -65,6 +66,24 @@ bool g_havePreviousView = false;
 
 bool finitePoint(CCPoint const& point) {
     return std::isfinite(point.x) && std::isfinite(point.y);
+}
+
+std::string currentGraphicsMode() {
+    auto mode = Mod::get()->getSettingValue<std::string>("graphics-mode");
+    if (mode != "hybrid") {
+        mode = "legacy";
+    }
+    if (mode != g_lastGraphicsMode) {
+        if (!g_lastGraphicsMode.empty()) {
+            diagnosticEvent("GRAPHICS_MODE_CHANGED from=" + g_lastGraphicsMode + " to=" + mode);
+        }
+        g_lastGraphicsMode = mode;
+    }
+    return mode;
+}
+
+bool hybridModeEnabled() {
+    return currentGraphicsMode() == "hybrid";
 }
 
 void clearCullingState(std::string const& status, PlayLayer* rememberedLayer = nullptr) {
@@ -372,7 +391,7 @@ class GPUHelperDebugOverlay final : public CCNode {
         auto const stats = gpuhelper::metal::getStats();
         bool const enabled = Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
         std::ostringstream display;
-        display << "GPU HELPER v0.4.1 | HYBRID INTEROP PROBE\n";
+        display << "GPU HELPER v0.4.2 | SELECTABLE GRAPHICS PATH\n";
         display << "HUD UPDATE: " << m_refreshCount << " | DRIVER TICKS: " << g_driverTicks << '\n';
         display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL: " << (g_metalAvailable ? "AVAILABLE" : "UNAVAILABLE")
@@ -405,19 +424,21 @@ class GPUHelperDebugOverlay final : public CCNode {
                     << "TIMING: " << stats.lastDecorationCullGpuMilliseconds
                     << "ms GPU | " << stats.lastDecorationCullSubmitMilliseconds << "ms SUBMIT\n";
         } else display << "TIMING: WAITING FOR COMPLETED GPU JOB\n";
-        bool const interopEnabled =
-            Mod::get()->getSettingValue<bool>("metal-opengl-interop-probe");
+        auto const graphicsMode = currentGraphicsMode();
+        display << "GRAPHICS PATH: "
+                << (graphicsMode == "hybrid" ? "HYBRID (METAL + OPENGL ES)" : "LEGACY (METAL COMPUTE)") << '\n';
         auto const interop = gpuhelper::interop::getProbeStatus();
         display << "METAL / OPENGL ES: "
-                << (!interopEnabled ? "DISABLED" :
+                << (graphicsMode != "hybrid" ? "INACTIVE - LEGACY MODE" :
                     (interop.ready ? "SHARED TEXTURE READY" :
                      (interop.attempted ? "PROBE FAILED" : "WAITING FOR GL CONTEXT"))) << '\n';
-        if (interop.ready) {
+        if (graphicsMode == "hybrid" && interop.ready) {
             display << "SHARED GL TEXTURE: " << interop.glTextureName << '\n';
         }
-        else if (interopEnabled && interop.attempted && !interop.error.empty()) {
+        else if (graphicsMode == "hybrid" && interop.attempted && !interop.error.empty()) {
             display << "INTEROP ERROR: " << interop.error.substr(0, 58) << '\n';
         }
+        display << "HYBRID STAGE: SHARED-TEXTURE PROBE ONLY - DRAWING UNCHANGED\n";
         display << "RENDER HOOK: REMOVED - GAME DRAWING UNCHANGED\n";
         display << "CRASH TRACE: PERSISTENT LOG ENABLED\n";
         display << "LOG EVENTS: " << g_diagnosticSequence;
@@ -488,8 +509,7 @@ public:
 
     void draw() override {
         CCNode::draw();
-        if (!Mod::get()->getSettingValue<bool>("metal-opengl-interop-probe") ||
-            m_loggedResult) {
+        if (!hybridModeEnabled() || m_loggedResult) {
             return;
         }
 
@@ -587,7 +607,7 @@ public:
 } // namespace
 
 $on_mod(Loaded) {
-    diagnosticEvent("SESSION_START version=v0.4.1 mode=measure_only renderer_hook=removed hybrid_probe=opt_in");
+    diagnosticEvent("SESSION_START version=v0.4.2 mode=selectable renderer_hook=removed");
     std::string error;
 
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);
@@ -613,7 +633,8 @@ $on_mod(Loaded) {
         std::string("SETTINGS overlay=") +
         (Mod::get()->getSettingValue<bool>("debug-overlay") ? "on" : "off") +
         " visibility_measurement=" +
-        (Mod::get()->getSettingValue<bool>("gpu-decoration-culling") ? "on" : "off")
+        (Mod::get()->getSettingValue<bool>("gpu-decoration-culling") ? "on" : "off") +
+        " graphics_path=" + currentGraphicsMode()
     );
 }
 
