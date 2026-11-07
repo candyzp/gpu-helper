@@ -45,7 +45,6 @@ std::size_t g_staticFlagCount = 0;
 std::size_t g_ungroupedStaticCount = 0;
 std::size_t g_rejectedBoundsCount = 0;
 std::uint64_t g_submittedJobs = 0;
-std::uint64_t g_lastLoggedCompletedJobs = 0;
 std::uint64_t g_lastLoggedFailures = 0;
 std::uint64_t g_driverTicks = 0;
 bool g_metalAvailable = false;
@@ -126,6 +125,7 @@ bool buildObjectBounds(
 }
 
 void configureDecorationCulling(PlayLayer* layer) {
+    diagnosticEvent("LEVEL_SCAN_BEGIN");
     clearCullingState("BUILDING");
     g_cullLayer = layer;
     g_scanComplete = false;
@@ -316,19 +316,6 @@ void tickDecorationCulling(PlayLayer* layer) {
             std::to_string(stats.decorationCullFailures) +
             " last_error=" + stats.lastDecorationCullError);
     }
-    if (stats.decorationCullDispatches > g_lastLoggedCompletedJobs) {
-        g_lastLoggedCompletedJobs = stats.decorationCullDispatches;
-        std::ostringstream event;
-        event << std::fixed << std::setprecision(4)
-              << "METAL_COMPLETED jobs=" << stats.decorationCullDispatches
-              << " processed=" << stats.totalDecorationObjectsProcessed
-              << " batch=" << stats.lastDecorationObjectCount
-              << " visible=" << stats.lastDecorationVisibleCount
-              << " gpu_ms=" << stats.lastDecorationCullGpuMilliseconds
-              << " submit_ms=" << stats.lastDecorationCullSubmitMilliseconds
-              << " applied_to_renderer=0";
-        diagnosticEvent(event.str());
-    }
 }
 
 
@@ -487,7 +474,13 @@ public:
                   << " eligible=" << g_cullCandidateCount
                   << " submitted=" << g_submittedJobs
                   << " completed=" << stats.decorationCullDispatches
-                  << " failures=" << stats.decorationCullFailures;
+                  << " failures=" << stats.decorationCullFailures
+                  << " last_batch=" << stats.lastDecorationObjectCount
+                  << " last_gpu_ms=" << stats.lastDecorationCullGpuMilliseconds
+                  << " last_submit_ms=" << stats.lastDecorationCullSubmitMilliseconds;
+            if (!stats.lastDecorationCullError.empty()) {
+                event << " last_error=" << stats.lastDecorationCullError;
+            }
             diagnosticEvent(event.str());
         }
     }
@@ -502,10 +495,12 @@ $on_mod(Loaded) {
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);
     if (g_metalAvailable) {
         log::info("[GPU Helper] Metal device detected: {}.", g_metalDeviceName);
+        diagnosticEvent("METAL_DEVICE_AVAILABLE name=" + g_metalDeviceName);
     }
     else {
         g_metalDeviceName = "Unavailable";
         log::warn("[GPU Helper] Metal device unavailable: {}", error);
+        diagnosticEvent("METAL_DEVICE_UNAVAILABLE reason=" + error);
     }
 
     log::info(
@@ -515,6 +510,12 @@ $on_mod(Loaded) {
     log::info(
         "[GPU Helper] GPU decoration culling setting: {}",
         Mod::get()->getSettingValue<bool>("gpu-decoration-culling") ? "enabled" : "disabled"
+    );
+    diagnosticEvent(
+        std::string("SETTINGS overlay=") +
+        (Mod::get()->getSettingValue<bool>("debug-overlay") ? "on" : "off") +
+        " visibility_measurement=" +
+        (Mod::get()->getSettingValue<bool>("gpu-decoration-culling") ? "on" : "off")
     );
 }
 
