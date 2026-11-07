@@ -486,8 +486,6 @@ public:
         }
 
         tickDecorationCulling(layer);
-    }
-
 
         m_heartbeatElapsed += dt;
         if (m_heartbeatElapsed >= 2.0f) {
@@ -502,6 +500,7 @@ public:
                   << " completed=" << stats.decorationCullDispatches;
             diagnosticEvent(event.str());
         }
+    }
 };
 
 } // namespace
@@ -554,7 +553,7 @@ class $modify(GPUHelperPlayLayer, PlayLayer) {
         }
 
 
-        if (!uiLayer->getChildByTag(kCullingDriverTag)) {
+        if (uiLayer && !uiLayer->getChildByTag(kCullingDriverTag)) {
             auto* driver = GPUHelperCullingDriver::create();
             if (driver) {
                 driver->setTag(kCullingDriverTag);
