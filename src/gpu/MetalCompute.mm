@@ -1,5 +1,11 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <CoreVideo/CoreVideo.h>
+#import <CoreVideo/CVMetalTextureCache.h>
+#import <CoreVideo/CVOpenGLESTextureCache.h>
+#import <OpenGLES/EAGL.h>
+#import <OpenGLES/ES2/gl.h>
+#import <OpenGLES/ES2/glext.h>
 
 #include "MetalCompute.hpp"
 
@@ -613,3 +619,205 @@ void clearDecorationCulling(std::uint64_t nextGeneration) {
 }
 
 } // namespace gpuhelper::metal
+
+
+namespace {
+
+std::mutex g_interopMutex;
+gpuhelper::interop::ProbeStatus g_interopStatus;
+CVPixelBufferRef g_interopPixelBuffer = nullptr;
+CVMetalTextureCacheRef g_interopMetalCache = nullptr;
+CVMetalTextureRef g_interopMetalTextureRef = nullptr;
+CVOpenGLESTextureCacheRef g_interopGLCache = nullptr;
+CVOpenGLESTextureRef g_interopGLTextureRef = nullptr;
+
+void releaseInteropResources() {
+    if (g_interopGLTextureRef) {
+        CFRelease(g_interopGLTextureRef);
+        g_interopGLTextureRef = nullptr;
+    }
+    if (g_interopGLCache) {
+        CFRelease(g_interopGLCache);
+        g_interopGLCache = nullptr;
+    }
+    if (g_interopMetalTextureRef) {
+        CFRelease(g_interopMetalTextureRef);
+        g_interopMetalTextureRef = nullptr;
+    }
+    if (g_interopMetalCache) {
+        CFRelease(g_interopMetalCache);
+        g_interopMetalCache = nullptr;
+    }
+    if (g_interopPixelBuffer) {
+        CFRelease(g_interopPixelBuffer);
+        g_interopPixelBuffer = nullptr;
+    }
+}
+
+} // namespace
+
+namespace gpuhelper::interop {
+
+ProbeStatus getProbeStatus() {
+    std::lock_guard<std::mutex> lock(g_interopMutex);
+    return g_interopStatus;
+}
+
+bool probeCurrentOpenGLContext(std::string& error) {
+    error.clear();
+
+    // This is called from a Cocos draw callback so the game's EAGLContext
+    // should already be current on this thread.
+    EAGLContext* context = [EAGLContext currentContext];
+    if (context == nil) {
+        error = "Waiting for the game's current EAGLContext.";
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(g_interopMutex);
+    if (g_interopStatus.attempted) {
+        error = g_interopStatus.error;
+        return g_interopStatus.ready;
+    }
+
+    g_interopStatus.attempted = true;
+    initializeBackend();
+    if (g_device == nil) {
+        g_interopStatus.error = g_initializationError.empty()
+            ? "Metal device or command queue is unavailable."
+            : g_initializationError;
+        error = g_interopStatus.error;
+        return false;
+    }
+
+    constexpr int kProbeWidth = 32;
+    constexpr int kProbeHeight = 32;
+
+    NSDictionary* pixelBufferAttributes = @{
+        (__bridge NSString*)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+        (__bridge NSString*)kCVPixelBufferWidthKey : @(kProbeWidth),
+        (__bridge NSString*)kCVPixelBufferHeightKey : @(kProbeHeight),
+        (__bridge NSString*)kCVPixelBufferMetalCompatibilityKey : @YES,
+        (__bridge NSString*)kCVPixelBufferOpenGLCompatibilityKey : @YES,
+        (__bridge NSString*)kCVPixelBufferIOSurfacePropertiesKey : @{}
+    };
+
+    CVReturn result = CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        kProbeWidth,
+        kProbeHeight,
+        kCVPixelFormatType_32BGRA,
+        (__bridge CFDictionaryRef)pixelBufferAttributes,
+        &g_interopPixelBuffer
+    );
+    if (result != kCVReturnSuccess || g_interopPixelBuffer == nullptr) {
+        g_interopStatus.error = "CVPixelBufferCreate failed: " + std::to_string(result);
+        releaseInteropResources();
+        error = g_interopStatus.error;
+        return false;
+    }
+
+    result = CVMetalTextureCacheCreate(
+        kCFAllocatorDefault, nullptr, g_device, nullptr, &g_interopMetalCache
+    );
+    if (result != kCVReturnSuccess || g_interopMetalCache == nullptr) {
+        g_interopStatus.error = "CVMetalTextureCacheCreate failed: " + std::to_string(result);
+        releaseInteropResources();
+        error = g_interopStatus.error;
+        return false;
+    }
+
+    NSDictionary* metalTextureAttributes = @{
+        (__bridge NSString*)kCVMetalTextureUsage :
+            @(MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite)
+    };
+    result = CVMetalTextureCacheCreateTextureFromImage(
+        kCFAllocatorDefault,
+        g_interopMetalCache,
+        g_interopPixelBuffer,
+        (__bridge CFDictionaryRef)metalTextureAttributes,
+        MTLPixelFormatBGRA8Unorm,
+        kProbeWidth,
+        kProbeHeight,
+        0,
+        &g_interopMetalTextureRef
+    );
+    id<MTLTexture> metalTexture = result == kCVReturnSuccess
+        ? CVMetalTextureGetTexture(g_interopMetalTextureRef)
+        : nil;
+    if (result != kCVReturnSuccess || metalTexture == nil) {
+        g_interopStatus.error =
+            "CVMetalTextureCacheCreateTextureFromImage failed: " + std::to_string(result);
+        releaseInteropResources();
+        error = g_interopStatus.error;
+        return false;
+    }
+
+    result = CVOpenGLESTextureCacheCreate(
+        kCFAllocatorDefault, nullptr, context, nullptr, &g_interopGLCache
+    );
+    if (result != kCVReturnSuccess || g_interopGLCache == nullptr) {
+        g_interopStatus.error = "CVOpenGLESTextureCacheCreate failed: " +
+            std::to_string(result);
+        releaseInteropResources();
+        error = g_interopStatus.error;
+        return false;
+    }
+
+    result = CVOpenGLESTextureCacheCreateTextureFromImage(
+        kCFAllocatorDefault,
+        g_interopGLCache,
+        g_interopPixelBuffer,
+        nullptr,
+        GL_TEXTURE_2D,
+        GL_RGBA,
+        kProbeWidth,
+        kProbeHeight,
+        GL_BGRA,
+        GL_UNSIGNED_BYTE,
+        0,
+        &g_interopGLTextureRef
+    );
+    if (result != kCVReturnSuccess || g_interopGLTextureRef == nullptr) {
+        g_interopStatus.error =
+            "CVOpenGLESTextureCacheCreateTextureFromImage failed: " +
+            std::to_string(result);
+        releaseInteropResources();
+        error = g_interopStatus.error;
+        return false;
+    }
+
+    GLuint const textureName = CVOpenGLESTextureGetName(g_interopGLTextureRef);
+    if (textureName == 0) {
+        g_interopStatus.error = "Core Video returned an empty OpenGL ES texture name.";
+        releaseInteropResources();
+        error = g_interopStatus.error;
+        return false;
+    }
+
+    // Validate the texture name in the active game context and restore its
+    // previous binding. The probe doesn't issue a draw or alter Cocos state.
+    GLint previousTexture = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+    glBindTexture(GL_TEXTURE_2D, textureName);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    GLboolean const isTexture = glIsTexture(textureName);
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
+
+    if (isTexture != GL_TRUE) {
+        g_interopStatus.error = "OpenGL ES could not validate the shared texture name.";
+        releaseInteropResources();
+        error = g_interopStatus.error;
+        return false;
+    }
+
+    g_interopStatus.glTextureName = textureName;
+    g_interopStatus.ready = true;
+    g_interopStatus.error.clear();
+    return true;
+}
+
+} // namespace gpuhelper::interop

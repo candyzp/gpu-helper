@@ -20,6 +20,7 @@ namespace {
 
 constexpr int kDebugOverlayTag = 0x475055;
 constexpr int kCullingDriverTag = 0x475043;
+constexpr int kInteropProbeTag = 0x475049;
 constexpr std::size_t kMinimumDecorationBatch = 96;
 constexpr std::size_t kMaximumDecorationBatch = 131072;
 constexpr float kCameraSafetyMargin = 640.0f;
@@ -371,7 +372,7 @@ class GPUHelperDebugOverlay final : public CCNode {
         auto const stats = gpuhelper::metal::getStats();
         bool const enabled = Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
         std::ostringstream display;
-        display << "GPU HELPER v0.3.9 | SAFE DIAGNOSTIC MODE\n";
+        display << "GPU HELPER v0.4.0 | HYBRID INTEROP PROBE\n";
         display << "HUD UPDATE: " << m_refreshCount << " | DRIVER TICKS: " << g_driverTicks << '\n';
         display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL: " << (g_metalAvailable ? "AVAILABLE" : "UNAVAILABLE")
@@ -404,6 +405,19 @@ class GPUHelperDebugOverlay final : public CCNode {
                     << "TIMING: " << stats.lastDecorationCullGpuMilliseconds
                     << "ms GPU | " << stats.lastDecorationCullSubmitMilliseconds << "ms SUBMIT\n";
         } else display << "TIMING: WAITING FOR COMPLETED GPU JOB\n";
+        bool const interopEnabled =
+            Mod::get()->getSettingValue<bool>("metal-opengl-interop-probe");
+        auto const interop = gpuhelper::interop::getProbeStatus();
+        display << "METAL / OPENGL ES: "
+                << (!interopEnabled ? "DISABLED" :
+                    (interop.ready ? "SHARED TEXTURE READY" :
+                     (interop.attempted ? "PROBE FAILED" : "WAITING FOR GL CONTEXT"))) << '\n';
+        if (interop.ready) {
+            display << "SHARED GL TEXTURE: " << interop.glTextureName << '\n';
+        }
+        else if (interopEnabled && interop.attempted && !interop.error.empty()) {
+            display << "INTEROP ERROR: " << interop.error.substr(0, 58) << '\n';
+        }
         display << "RENDER HOOK: REMOVED - GAME DRAWING UNCHANGED\n";
         display << "CRASH TRACE: PERSISTENT LOG ENABLED\n";
         display << "LOG EVENTS: " << g_diagnosticSequence;
@@ -456,6 +470,45 @@ public:
             diagnosticEvent("HUD_HEARTBEAT updates=" + std::to_string(m_refreshCount) +
                 " driver_ticks=" + std::to_string(g_driverTicks));
         }
+    }
+};
+
+class GPUHelperInteropProbe final : public CCNode {
+    bool m_loggedResult = false;
+public:
+    static GPUHelperInteropProbe* create() {
+        auto* ret = new GPUHelperInteropProbe();
+        if (ret && ret->init()) {
+            ret->autorelease();
+            return ret;
+        }
+        CC_SAFE_DELETE(ret);
+        return nullptr;
+    }
+
+    void draw() override {
+        CCNode::draw();
+        if (!Mod::get()->getSettingValue<bool>("metal-opengl-interop-probe") ||
+            m_loggedResult) {
+            return;
+        }
+
+        std::string error;
+        bool const ready = gpuhelper::interop::probeCurrentOpenGLContext(error);
+        auto const status = gpuhelper::interop::getProbeStatus();
+        if (ready) {
+            diagnosticEvent(
+                "METAL_OPENGL_INTEROP_READY gl_texture=" +
+                std::to_string(status.glTextureName) +
+                " backing=shared_CVPixelBuffer metal=BGRA8Unorm"
+            );
+            m_loggedResult = true;
+        }
+        else if (status.attempted) {
+            diagnosticEvent("METAL_OPENGL_INTEROP_FAILED reason=" + status.error);
+            m_loggedResult = true;
+        }
+        // If no EAGLContext is current, retry on the next Cocos draw.
     }
 };
 
@@ -534,7 +587,7 @@ public:
 } // namespace
 
 $on_mod(Loaded) {
-    diagnosticEvent("SESSION_START version=v0.3.9 mode=measure_only renderer_hook=removed");
+    diagnosticEvent("SESSION_START version=v0.4.0 mode=measure_only renderer_hook=removed hybrid_probe=opt_in");
     std::string error;
 
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);
@@ -588,6 +641,15 @@ class $modify(GPUHelperPlayLayer, PlayLayer) {
             }
         }
 
+
+        if (uiLayer && !uiLayer->getChildByTag(kInteropProbeTag)) {
+            auto* probe = GPUHelperInteropProbe::create();
+            if (probe) {
+                probe->setTag(kInteropProbeTag);
+                uiLayer->addChild(probe, 1000002);
+                diagnosticEvent("INTEROP_PROBE_NODE_ATTACHED parent=PlayLayer.m_uiLayer");
+            }
+        }
 
         if (uiLayer && !uiLayer->getChildByTag(kCullingDriverTag)) {
             auto* driver = GPUHelperCullingDriver::create();

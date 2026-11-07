@@ -88,3 +88,20 @@ bool takeDecorationCullingResults(
 void clearDecorationCulling(std::uint64_t nextGeneration);
 
 } // namespace gpuhelper::metal
+
+
+namespace gpuhelper::interop {
+
+struct ProbeStatus {
+    bool attempted = false;
+    bool ready = false;
+    std::uint32_t glTextureName = 0;
+    std::string error;
+};
+
+// Call only while Geometry Dash's OpenGL ES context is current. This creates
+// Metal and OpenGL ES texture views over the same Core Video pixel buffer.
+bool probeCurrentOpenGLContext(std::string& error);
+ProbeStatus getProbeStatus();
+
+} // namespace gpuhelper::interop

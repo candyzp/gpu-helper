@@ -1,8 +1,15 @@
 # GPU Helper
 
+## v0.4.0 — Hybrid interop foundation probe
+
+This build adds an opt-in shared-texture probe for the existing OpenGL ES renderer and the Metal compute backend. When enabled, a small Core Video pixel buffer is created with both Metal and OpenGL ES compatibility. The game's current EAGLContext is obtained from a Cocos draw callback, and Core Video creates a Metal texture view and an OpenGL ES texture view from the same backing. The probe validates that both texture objects can be created and that the GL texture name is valid in the game context.
+
+This is deliberately not a renderer integration yet: it does not sample the Metal texture in a Cocos shader, does not pass culling results to the game renderer, does not replace drawing, and does not affect gameplay. Enable **Experimental Metal / OpenGL ES shared-texture probe** to run it.
+
+
 An iOS-only Geometry Dash 2.2081 / Geode 5.11.2 Metal visibility-measurement and crash-diagnostics experiment.
 
-## v0.3.8 — Safe diagnostic mode
+## v0.3.9 — Safe diagnostic mode
 
 This build removes the GameObject::visit override completely and no longer keeps a per-object GameObject pointer cache. The Metal kernel still measures whether eligible static-decoration bounds intersect the expanded camera view, but returned visibility data is diagnostic only and is not applied to the renderer. Geometry Dash keeps its normal drawing path.
 

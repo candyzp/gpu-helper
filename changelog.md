@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.0
+- Add an opt-in Metal/OpenGL ES interop resource probe using a Core Video pixel buffer with both compatibility flags enabled.
+- Create Metal and OpenGL ES texture views from the same pixel buffer during the active Cocos draw callback.
+- Validate the OpenGL ES texture in the current game context and report the result in the live HUD and persistent diagnostics.
+- Link CoreVideo and OpenGLES frameworks. This is an interop foundation test only; it does not change rendering or apply visibility results.
+
+
 ## v0.3.9
 - Use object-layer-local bounds directly when a decoration is already parented to the object layer, avoiding an unnecessary world-space round trip.
 - Add a clearly labeled detached-object bounds fallback for entries in PlayLayer::m_objects that have no Cocos parent; this is measurement-only and never affects rendering.
