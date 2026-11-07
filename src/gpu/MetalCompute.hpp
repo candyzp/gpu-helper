@@ -22,6 +22,8 @@ struct ComputeStats {
     double lastDecorationCullGpuMilliseconds = 0.0;
     double lastDecorationCullSubmitMilliseconds = 0.0;
     bool decorationCullTimingAvailable = false;
+    std::uint64_t decorationCullFailures = 0;
+    std::string lastDecorationCullError;
 };
 
 struct ObjectBounds {
