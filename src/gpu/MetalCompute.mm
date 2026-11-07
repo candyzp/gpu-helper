@@ -1,11 +1,14 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <TargetConditionals.h>
+#if TARGET_OS_IOS
 #import <CoreVideo/CoreVideo.h>
 #import <CoreVideo/CVMetalTextureCache.h>
 #import <CoreVideo/CVOpenGLESTextureCache.h>
 #import <OpenGLES/EAGL.h>
 #import <OpenGLES/ES2/gl.h>
 #import <OpenGLES/ES2/glext.h>
+#endif
 
 #include "MetalCompute.hpp"
 
@@ -621,6 +624,8 @@ void clearDecorationCulling(std::uint64_t nextGeneration) {
 } // namespace gpuhelper::metal
 
 
+#if TARGET_OS_IOS
+
 namespace {
 
 std::mutex g_interopMutex;
@@ -821,3 +826,5 @@ bool probeCurrentOpenGLContext(std::string& error) {
 }
 
 } // namespace gpuhelper::interop
+
+#endif // TARGET_OS_IOS

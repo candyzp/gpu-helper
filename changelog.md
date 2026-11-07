@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.1
+- Restrict the Core Video OpenGL ES interop headers and implementation to iOS builds, preserving the macOS Metal regression test target.
+- Keep the v0.4.0 opt-in shared-texture probe behavior unchanged.
+
+
 ## v0.4.0
 - Add an opt-in Metal/OpenGL ES interop resource probe using a Core Video pixel buffer with both compatibility flags enabled.
 - Create Metal and OpenGL ES texture views from the same pixel buffer during the active Cocos draw callback.

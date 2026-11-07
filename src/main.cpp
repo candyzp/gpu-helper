@@ -372,7 +372,7 @@ class GPUHelperDebugOverlay final : public CCNode {
         auto const stats = gpuhelper::metal::getStats();
         bool const enabled = Mod::get()->getSettingValue<bool>("gpu-decoration-culling");
         std::ostringstream display;
-        display << "GPU HELPER v0.4.0 | HYBRID INTEROP PROBE\n";
+        display << "GPU HELPER v0.4.1 | HYBRID INTEROP PROBE\n";
         display << "HUD UPDATE: " << m_refreshCount << " | DRIVER TICKS: " << g_driverTicks << '\n';
         display << "DEVICE: " << g_metalDeviceName << '\n';
         display << "METAL: " << (g_metalAvailable ? "AVAILABLE" : "UNAVAILABLE")
@@ -587,7 +587,7 @@ public:
 } // namespace
 
 $on_mod(Loaded) {
-    diagnosticEvent("SESSION_START version=v0.4.0 mode=measure_only renderer_hook=removed hybrid_probe=opt_in");
+    diagnosticEvent("SESSION_START version=v0.4.1 mode=measure_only renderer_hook=removed hybrid_probe=opt_in");
     std::string error;
 
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);

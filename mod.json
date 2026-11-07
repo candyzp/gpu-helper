@@ -5,7 +5,7 @@
   },
   "id": "candyzp.gpuhelper",
   "name": "GPU Helper",
-  "version": "v0.4.0",
+  "version": "v0.4.1",
   "developer": "candyzp",
   "description": "Experimental iOS Metal/OpenGL ES hybrid-rendering research with an opt-in shared-texture interop probe, Metal visibility measurements, and persistent diagnostics.",
   "tags": [
