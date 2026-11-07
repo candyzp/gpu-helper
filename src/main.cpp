@@ -693,7 +693,7 @@ public:
 } // namespace
 
 $on_mod(Loaded) {
-    diagnosticEvent("SESSION_START version=v0.5.0 mode=legacy_or_gpu_driven atlas_hook=CCTextureAtlas::drawNumberOfQuads");
+    diagnosticEvent("SESSION_START version=v0.5.1 mode=legacy_or_gpu_driven atlas_hook=CCTextureAtlas::drawNumberOfQuads init_texture_guard=first_null_reject");
     std::string error;
 
     g_metalAvailable = gpuhelper::metal::getDeviceName(g_metalDeviceName, error);

@@ -1,6 +1,6 @@
 # GPU Helper
 
-## v0.5.0 — GPU-assisted atlas draw-range culling
+## v0.5.1 — startup null-texture guard and GPU-assisted atlas draw-range culling
 
 The Geode setting **GPU Helper graphics path** now offers two paths:
 

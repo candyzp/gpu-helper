@@ -418,6 +418,27 @@ FrameStats getFrameStats() {
 } // namespace gpuhelper::atlas
 
 class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
+    static void onModify(auto& self) {
+        if (!self.setHookPriorityPre(
+                "cocos2d::CCTextureAtlas::initWithTexture",
+                Priority::First)) {
+            log::warn(
+                "[GPU Helper] Could not set first priority for CCTextureAtlas::initWithTexture null guard."
+            );
+        }
+    }
+
+    bool initWithTexture(cocos2d::CCTexture2D* texture, unsigned int capacity) {
+        if (!texture) {
+            log::error(
+                "[GPU Helper] Rejected CCTextureAtlas::initWithTexture(nullptr, {}) before other hooks/original.",
+                capacity
+            );
+            return false;
+        }
+        return cocos2d::CCTextureAtlas::initWithTexture(texture, capacity);
+    }
+
     void drawNumberOfQuads(unsigned int count, unsigned int start) {
         logOpenGLESVersionOnce();
 
@@ -468,8 +489,29 @@ class $modify(GPUHelperTextureAtlas, cocos2d::CCTextureAtlas) {
 };
 
 
-// Deliberately do not hook CCSpriteBatchNode lifecycle methods. They run during
-// loading/UI construction as well as gameplay; the first device launch exposed
-// a startup regression in that broad hook surface. Atlas-native mutators above
-// still invalidate inserts/removals/capacity changes without changing batch-node
-// initialization or label creation.
+class $modify(GPUHelperSpriteBatchNodeInitGuard, cocos2d::CCSpriteBatchNode) {
+    static void onModify(auto& self) {
+        if (!self.setHookPriorityPre(
+                "cocos2d::CCSpriteBatchNode::initWithTexture",
+                Priority::First)) {
+            log::warn(
+                "[GPU Helper] Could not set first priority for CCSpriteBatchNode::initWithTexture null guard."
+            );
+        }
+    }
+
+    bool initWithTexture(cocos2d::CCTexture2D* texture, unsigned int capacity) {
+        if (!texture) {
+            log::error(
+                "[GPU Helper] Rejected CCSpriteBatchNode::initWithTexture(nullptr, {}) before other hooks/original.",
+                capacity
+            );
+            return false;
+        }
+        return cocos2d::CCSpriteBatchNode::initWithTexture(texture, capacity);
+    }
+};
+
+// These are narrow null-argument guards only. No child, sort, reorder, or
+// capacity lifecycle hooks are installed on CCSpriteBatchNode. Returning false
+// for a null texture prevents the Cocos init path from dereferencing it.

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.1
+- Add first-priority null-texture guards to CCSpriteBatchNode::initWithTexture and CCTextureAtlas::initWithTexture, preventing a null texture from reaching Cocos code that dereferences it.
+- Keep the existing atlas draw-range culling implementation and remove no additional batch-node lifecycle hooks.
+- Add a unique v0.5.1 startup diagnostic marker for build identification.
+
+
 ## v0.4.2
 - Replace the standalone hybrid-probe boolean with a single-choice graphics path selector: legacy or hybrid.
 - Keep legacy Metal visibility measurement as the default and preserve its behavior.
