@@ -2,6 +2,7 @@
 
 #include <Geode/Geode.hpp>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
